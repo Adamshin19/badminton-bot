@@ -46,6 +46,8 @@ class BadmintonBot {
     this.courtCount = 1; // Manually controlled court count
     this.targetGroup = null;
     this.lastStatusMessage = null; // Track the last status message to delete it
+    this.conversationHistory = []; // Store last 10 messages for context analysis
+    this.maxHistoryLength = 10; // Keep last 10 messages
 
     this.setupEventHandlers();
   }
@@ -233,8 +235,22 @@ class BadmintonBot {
         return;
       }
 
-      // Use AI to analyze the message intent
-      console.log(`🤖 Calling AI analysis...`);
+      // Add message to conversation history
+      this.addToConversationHistory(senderName, messageText);
+
+      // Try conversation context analysis first
+      const contextAnalysis = await this.analyzeConversationContext();
+      if (contextAnalysis && contextAnalysis.action !== "irrelevant") {
+        console.log(`🧠 Using conversation context analysis:`, contextAnalysis);
+        if (contextAnalysis.contextExplanation) {
+          console.log(`💭 Context: ${contextAnalysis.contextExplanation}`);
+        }
+        await this.handleAnalysisResult(contextAnalysis, senderName, message);
+        return;
+      }
+
+      // Fallback to individual message analysis
+      console.log(`🤖 Falling back to individual message analysis...`);
       const analysis = await this.analyzeMessageWithAI(messageText, senderName);
       console.log(`🤖 AI Analysis:`, analysis);
 
@@ -243,128 +259,256 @@ class BadmintonBot {
         return;
       }
 
-      if (analysis.action === "location_update" && senderName === "Adam Shin") {
-        this.location = analysis.location;
-        console.log(`📍 Location updated to: ${this.location}`);
-        await this.sendStatusUpdate(message);
+      await this.handleAnalysisResult(analysis, senderName, message);
+    } catch (error) {
+      console.error("❌ Error handling message:", error);
+    }
+  }
+
+  addToConversationHistory(senderName, messageText) {
+    const timestamp = new Date().toISOString();
+    this.conversationHistory.push({
+      sender: senderName,
+      message: messageText,
+      timestamp: timestamp,
+    });
+
+    // Keep only the last N messages
+    if (this.conversationHistory.length > this.maxHistoryLength) {
+      this.conversationHistory = this.conversationHistory.slice(
+        -this.maxHistoryLength
+      );
+    }
+
+    console.log(
+      `📝 Added to conversation history (${this.conversationHistory.length}/${this.maxHistoryLength}): ${senderName}: "${messageText}"`
+    );
+  }
+
+  async analyzeConversationContext() {
+    if (this.conversationHistory.length < 2) {
+      console.log(
+        `📚 Not enough conversation history (${this.conversationHistory.length} messages)`
+      );
+      return null;
+    }
+
+    try {
+      // Format conversation history for AI
+      const conversationText = this.conversationHistory
+        .map((msg) => `${msg.sender}: ${msg.message}`)
+        .join("\n");
+
+      const prompt = `Analyze conversation for badminton coordination:
+
+${conversationText}
+
+RULES:
+- Unspecified activities = badminton
+- Non-badminton activities = irrelevant  
+- "so does X", "and X", "+X", "bringing X" = definitive confirmations (always add)
+- Questions about others = wait for their response
+- Same person continuing previous statement = valid addition
+
+PATTERNS:
+1. Question-Answer (different people): A asks B → B responds "Yes" → add B
+2. Continuation (same person): A says "I play" → A says "so does X" → add X  
+3. Addition phrases: "bringing X", "X wants to play", "+X" → add X
+4. Uncertainty: "might", "maybe" → irrelevant
+
+JSON format:
+{
+  "action": "add_guest|remove_guest|request_spot|remove_player|ask_availability|status_inquiry|location_update|court_update|irrelevant",
+  "confidence": 0.9,
+  "guestName": "name",
+  "guestNames": ["name1", "name2"],
+  "certainty": "confirmed|uncertain",
+  "contextExplanation": "brief reason"
+}
+
+Actions:
+- add_guest: confirmed wants to play
+- remove_guest: confirmed can't come  
+- request_spot: someone wants to play themselves
+- remove_player: sender backing out themselves
+- ask_availability: asking about spots ("Play?")
+- status_inquiry: asking current status ("Playing?")
+- location_update/court_update: only Adam Shin
+- irrelevant: no clear badminton coordination
+
+EXAMPLES:
+Good: "Do you want to play?" → "Yes" = add_guest
+Good: "I want to play" → "so does mike" = add_guest(mike)
+Good: "Play?" = ask_availability
+Bad: "Want to play tennis?" → "Yes" = irrelevant
+
+Return JSON only.`;
+
+      console.log(`🧠 Using GPT-4o for conversation context analysis...`);
+      const response = await this.openai.chat.completions.create({
+        model: "gpt-4o", // Upgraded model for better conversation context understanding
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 150,
+        temperature: 0,
+      });
+
+      const content = response.choices[0].message.content.trim();
+      console.log(`🧠 Raw conversation analysis: "${content}"`);
+
+      // Clean up the response in case it has markdown or extra text
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const analysis = JSON.parse(jsonMatch[0]);
+        console.log(`🧠 Conversation context analysis:`, analysis);
+        return analysis;
+      } else {
+        throw new Error("No JSON found in conversation analysis");
+      }
+    } catch (error) {
+      console.error("🧠 Conversation analysis failed:", error.message);
+      return null;
+    }
+  }
+
+  async handleAnalysisResult(analysis, senderName, message) {
+    if (analysis.action === "location_update" && senderName === "Adam Shin") {
+      this.location = analysis.location;
+      console.log(`📍 Location updated to: ${this.location}`);
+      await this.sendStatusUpdate(message);
+      return;
+    }
+
+    if (analysis.action === "add_guest") {
+      // Check for uncertainty
+      if (analysis.certainty === "uncertain") {
+        console.log(
+          `⚠️ Uncertain guest request for ${analysis.guestName}, not adding`
+        );
         return;
       }
 
-      if (analysis.action === "add_guest") {
-        // Check for uncertainty
-        if (analysis.certainty === "uncertain") {
-          console.log(
-            `⚠️ Uncertain guest request for ${analysis.guestName}, not adding`
-          );
-          return;
-        }
+      // Determine who is responsible for the guest
+      // For conversation context, use the responder as the host
+      // For individual messages, use the senderName
+      const guestHost = analysis.responder || senderName;
 
-        // Handle multiple guests
-        if (analysis.guestNames && analysis.guestNames.length > 1) {
-          analysis.guestNames.forEach((guestName) => {
-            this.addPlayer(guestName, Date.now(), true, senderName);
-          });
-        } else if (analysis.guestName) {
-          this.addPlayer(analysis.guestName, Date.now(), true, senderName);
-        }
-        await this.sendStatusUpdate(message);
-        return;
+      console.log(
+        `👥 Adding guest via conversation context - Host: ${guestHost}, Guest: ${
+          analysis.guestName || analysis.guestNames
+        }`
+      );
+
+      // Handle multiple guests
+      if (analysis.guestNames && analysis.guestNames.length > 1) {
+        analysis.guestNames.forEach((guestName) => {
+          this.addPlayer(guestName, Date.now(), true, guestHost);
+        });
+      } else if (analysis.guestName) {
+        this.addPlayer(analysis.guestName, Date.now(), true, guestHost);
+      }
+      await this.sendStatusUpdate(message);
+      return;
+    }
+
+    if (analysis.action === "court_update" && senderName === "Adam Shin") {
+      // Only Adam can update court count - handle various patterns
+      let newCourtCount = null;
+      const messageText = message.body ? message.body.trim() : "";
+
+      // Pattern 1: "booked 2 courts", "courts: 2", "2 courts"
+      let courtMatch = messageText.match(
+        /(?:booked?\s+|courts?:?\s*|have\s+)(\d+)/i
+      );
+      if (courtMatch) {
+        newCourtCount = parseInt(courtMatch[1]);
       }
 
-      if (analysis.action === "court_update" && senderName === "Adam Shin") {
-        // Only Adam can update court count - handle various patterns
-        let newCourtCount = null;
+      // Pattern 2: "booked another court" (increment by 1)
+      else if (messageText.match(/booked?\s+(another|one\s+more)\s+court/i)) {
+        newCourtCount = this.courtCount + 1;
+      }
 
-        // Pattern 1: "booked 2 courts", "courts: 2", "2 courts"
-        let courtMatch = messageText.match(
-          /(?:booked?\s+|courts?:?\s*|have\s+)(\d+)/i
+      // Pattern 3: "cancelled a court", "lost a court" (decrement by 1)
+      else if (
+        messageText.match(/cancel(led)?\s+(a\s+)?court|lost\s+(a\s+)?court/i)
+      ) {
+        newCourtCount = Math.max(1, this.courtCount - 1); // Don't go below 1 court
+      }
+
+      // Pattern 4: "we have X courts now", "only X court(s)"
+      else {
+        courtMatch = messageText.match(
+          /(?:we\s+have\s+|only\s+)(\d+)\s+courts?/i
         );
         if (courtMatch) {
           newCourtCount = parseInt(courtMatch[1]);
         }
-
-        // Pattern 2: "booked another court" (increment by 1)
-        else if (messageText.match(/booked?\s+(another|one\s+more)\s+court/i)) {
-          newCourtCount = this.courtCount + 1;
-        }
-
-        // Pattern 3: "cancelled a court", "lost a court" (decrement by 1)
-        else if (
-          messageText.match(/cancel(led)?\s+(a\s+)?court|lost\s+(a\s+)?court/i)
-        ) {
-          newCourtCount = Math.max(1, this.courtCount - 1); // Don't go below 1 court
-        }
-
-        // Pattern 4: "we have X courts now", "only X court(s)"
-        else {
-          courtMatch = messageText.match(
-            /(?:we\s+have\s+|only\s+)(\d+)\s+courts?/i
-          );
-          if (courtMatch) {
-            newCourtCount = parseInt(courtMatch[1]);
-          }
-        }
-
-        if (newCourtCount && newCourtCount > 0) {
-          console.log(
-            `🏸 Detected court update: ${this.courtCount} → ${newCourtCount}`
-          );
-          this.updateCourtCount(newCourtCount);
-          await this.sendStatusUpdate(message);
-        } else {
-          console.log(
-            `⚠️ Court update detected but couldn't parse number from: "${messageText}"`
-          );
-        }
-        return;
       }
 
-      if (analysis.action === "remove_player") {
-        // Check if removing someone else or themselves
-        if (analysis.guestName && analysis.guestName !== senderName) {
-          // Removing someone else (guest or other player)
-          this.removePlayer(analysis.guestName);
-        } else {
-          // Removing themselves
-          this.removePlayer(senderName);
-        }
+      if (newCourtCount && newCourtCount > 0) {
+        console.log(
+          `🏸 Detected court update: ${this.courtCount} → ${newCourtCount}`
+        );
+        this.updateCourtCount(newCourtCount);
         await this.sendStatusUpdate(message);
-        return;
+      } else {
+        console.log(
+          `⚠️ Court update detected but couldn't parse number from: "${messageText}"`
+        );
       }
+      return;
+    }
 
-      if (analysis.action === "remove_guest") {
+    if (analysis.action === "remove_player") {
+      // Check if removing someone else or themselves
+      if (analysis.guestName && analysis.guestName !== senderName) {
+        // Removing someone else (guest or other player)
         this.removePlayer(analysis.guestName);
-        await this.sendStatusUpdate(message);
-        return;
+      } else {
+        // Removing themselves
+        this.removePlayer(senderName);
       }
+      await this.sendStatusUpdate(message);
+      return;
+    }
 
-      if (
-        analysis.action === "request_spot" ||
-        analysis.action === "ask_availability"
-      ) {
-        // Check if this is requesting a spot for someone else (guest)
-        if (analysis.guestName && analysis.guestName !== senderName) {
-          // This is a guest addition
-          this.addPlayer(analysis.guestName, Date.now(), true, senderName);
-        } else {
-          // This is the sender requesting a spot for themselves
-          if (!this.isPlayerRegistered(senderName)) {
-            this.addPlayer(senderName, Date.now(), false, null);
-          }
-        }
-        await this.sendStatusUpdate(message);
-        return;
-      }
+    if (analysis.action === "remove_guest") {
+      this.removePlayer(analysis.guestName);
+      await this.sendStatusUpdate(message);
+      return;
+    }
 
-      // Only respond to badminton-related messages
-      if (analysis.action !== "irrelevant" && analysis.confidence > 0.6) {
-        // Handle any remaining actions that need responses
-        if (analysis.action === "status_inquiry") {
-          await this.sendStatusUpdate(message);
+    if (
+      analysis.action === "request_spot" ||
+      analysis.action === "ask_availability"
+    ) {
+      // For conversation context, the responder is the one wanting to play
+      const playerName = analysis.responder || senderName;
+
+      console.log(
+        `🏸 Request spot via conversation context - Player: ${playerName}`
+      );
+
+      // Check if this is requesting a spot for someone else (guest)
+      if (analysis.guestName && analysis.guestName !== playerName) {
+        // This is a guest addition
+        this.addPlayer(analysis.guestName, Date.now(), true, playerName);
+      } else {
+        // This is the player requesting a spot for themselves
+        if (!this.isPlayerRegistered(playerName)) {
+          this.addPlayer(playerName, Date.now(), false, null);
         }
       }
-    } catch (error) {
-      console.error("❌ Error handling message:", error);
+      await this.sendStatusUpdate(message);
+      return;
+    }
+
+    // Only respond to badminton-related messages
+    if (analysis.action !== "irrelevant" && analysis.confidence > 0.6) {
+      // Handle any remaining actions that need responses
+      if (analysis.action === "status_inquiry") {
+        await this.sendStatusUpdate(message);
+      }
     }
   }
 
@@ -392,60 +536,38 @@ class BadmintonBot {
     try {
       const prompt = `Message: "${messageText}" | Sender: ${senderName}
 
-Analyze ONLY badminton coordination intent. Return valid JSON only:
+Analyze for badminton coordination. Return JSON:
 {
-  "action": "one_of_these_only",
+  "action": "add_guest|remove_guest|request_spot|remove_player|ask_availability|status_inquiry|location_update|court_update|irrelevant",
   "confidence": 0.9,
-  "location": "Batts",
-  "guestName": "name_of_person_mentioned",
+  "guestName": "name",
   "guestNames": ["name1", "name2"],
-  "certainty": "confirmed/uncertain"
+  "certainty": "confirmed|uncertain"
 }
 
-Actions (use ONLY these):
-- location_update: mentions Batts or Lions (only from Adam Shin)
-- add_guest: adding someone (ONLY if they DEFINITELY want to play - "X wants to play", "bringing X", "+X")
-- remove_guest: removing guest (X can't come, X doesn't want to play anymore)
-- request_spot: sender wants to play themselves
-- remove_player: sender can't play anymore, backing out
-- ask_availability: asking about spots
-- status_inquiry: asking who's playing/status
-- court_update: sender updating court count - booking courts ("booked X courts", "I booked another court") OR cancelling courts ("cancelled a court", "lost a court", "only 1 court now") (only from Adam Shin)
-- irrelevant: not about badminton coordination
-
-CRITICAL RULES FOR ADDING GUESTS:
-- NEVER add someone just because they are mentioned or tagged (@username)
-- NEVER add someone if message is asking about OTHERS: "do you want to play?", "does X want to join?"
-- NEVER add someone if message contains question words about OTHERS: "do they", "will he", "can she", "would X"
-- ONLY add guests if message explicitly states they WANT to play: "X wants to play", "X is coming", "bringing X", "+X"
-- If message is asking someone ELSE to play, use "irrelevant" - wait for their response
-- If sender is asking to play THEMSELVES ("can I play?", "is there space?"), use "request_spot"
-- If message ends with "?" it's usually a question - be cautious about treating as confirmation
-- Messages with "?" asking about games/availability should be "ask_availability" or "status_inquiry"
-- Only treat as "request_spot" if message clearly states intent to play ("I want to play", "count me in")
-- If message contains "might", "maybe", "possibly", "thinking", set certainty: "uncertain" and action: "irrelevant"
-- For multiple guests, extract all names into "guestNames" array
-- If message mentions someone else's name and they want to play, use "add_guest" with their name(s)
-- If message mentions someone else's name and they can't/don't want to play, use "remove_guest" with their name
-- Only use "remove_player" if the SENDER is backing out themselves
-- Only allow "court_update" from Adam Shin
-- Always set "guestName" to the first name mentioned, "guestNames" to all names mentioned
+RULES:
+- "so does X", "bringing X", "+X", "X wants to play" = add_guest (confirmed)
+- NEVER add someone for questions: "Do you want to play?" = irrelevant
+- NEVER add @tagged users unless explicitly confirmed
+- "I want to play", "count me in" = request_spot
+- "I can't play", "backing out" = remove_player
+- "might", "maybe" = uncertain → irrelevant
+- Questions ending with "?": "Play?" = ask_availability, "Playing?" = status_inquiry
+- Only Adam Shin can update location (Batts/Lions) or courts
+- Extract multiple names into guestNames array
 
 EXAMPLES:
-"Do you want to play @john" → "irrelevant" (asking about others)
-"Play?" → "ask_availability" (asking if there's a game)
-"Playing?" → "status_inquiry" (asking about current status)
-"Can I play?" → "request_spot" (clear request to join)
-"I want to play" → "request_spot" (clear statement of intent)
-"Is there space? I want to join" → "request_spot" (clear intent stated)
-"Play" → "request_spot" (statement, not question)
-"John wants to play" → "add_guest" with guestName: "John"
-"@john are you coming?" → "irrelevant" (asking about others)
-"+john" → "add_guest" with guestName: "john"
-"bringing sarah" → "add_guest" with guestName: "sarah"
+"so does nabeel" → add_guest(nabeel, confirmed)
+"bringing mike and sarah" → add_guest(guestNames: [mike, sarah])
+"I want to play" → request_spot
+"Do you want to play?" → irrelevant (question about others)
+"Play?" → ask_availability
+"Playing?" → status_inquiry
+"booked 2 courts" → court_update (Adam only)
 
-Return only valid JSON, no explanations.`;
+Return JSON only.`;
 
+      console.log(`🤖 Using GPT-4o-mini for individual message analysis...`);
       const response = await this.openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
@@ -740,6 +862,39 @@ Return only valid JSON, no explanations.`;
       console.log(`🧪 Test failed:`, error.message);
     }
     console.log("🧪 Test complete\n");
+
+    // Test the specific "so does nabeel" scenario
+    console.log("🧪 Testing 'so does nabeel' scenario...");
+
+    // Simulate conversation history
+    this.conversationHistory = [
+      {
+        sender: "Adam Shin",
+        message: "i want to play",
+        timestamp: new Date().toISOString(),
+      },
+      {
+        sender: "Adam Shin",
+        message: "so does nabeel",
+        timestamp: new Date().toISOString(),
+      },
+    ];
+
+    try {
+      const contextAnalysis = await this.analyzeConversationContext();
+      console.log("🧪 Context analysis result:", contextAnalysis);
+
+      // Also test individual analysis
+      const individualAnalysis = await this.analyzeMessageWithAI(
+        "so does nabeel",
+        "Adam Shin"
+      );
+      console.log("🧪 Individual analysis result:", individualAnalysis);
+    } catch (error) {
+      console.log("🧪 Scenario test failed:", error.message);
+    }
+
+    console.log("🧪 Scenario test complete\n");
   }
 
   // Manual control methods
