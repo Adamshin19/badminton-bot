@@ -26,7 +26,8 @@ class BadmintonBot {
 
     // Configuration - Easy to modify
     this.config = {
-      groupName: "Adam test", // Updated to match your group
+      //   groupName: "Saturday Badminton Court Scavenging Carnivores",
+      groupName: "Adam test",
       defaultLocation: "Batts",
       openaiApiKey: process.env.OPENAI_API_KEY,
       playersPerCourt: 4,
@@ -90,16 +91,14 @@ class BadmintonBot {
           }
         }
 
-        // Process messages from target group OR direct messages for testing
+        // Process messages in the target group (check both to and from for group messages)
         if (
-          (this.targetGroup &&
-            message.from === this.targetGroup.id._serialized) ||
-          message.from.endsWith("@lid") // Direct messages for testing
+          this.targetGroup &&
+          (message.to === this.targetGroup.id._serialized ||
+            message.from === this.targetGroup.id._serialized)
         ) {
           console.log(
-            `✅ Processing message from ${
-              message.from.endsWith("@lid") ? "direct message" : "target group"
-            } (fromMe: ${message.fromMe})`
+            `✅ Processing message in target group from ${message.from} to ${message.to} (fromMe: ${message.fromMe})`
           );
 
           // Skip bot's own status update messages to avoid loops
@@ -113,6 +112,14 @@ class BadmintonBot {
           }
 
           await this.handleMessage(message);
+        } else {
+          // Log and ignore all messages not sent to the target group
+          if (message.body && message.body.trim() && message.type === "chat") {
+            console.log(
+              `🚫 Ignoring message not to target group: "${message.body}" (to: ${message.to}, from: ${message.from})`
+            );
+          }
+          // Explicitly do nothing - don't process the message or call AI
         }
       } catch (error) {
         console.error("Error in message_create handler:", error);
@@ -405,8 +412,13 @@ Actions (use ONLY these):
 - court_update: sender updating court count - booking courts ("booked X courts", "I booked another court") OR cancelling courts ("cancelled a court", "lost a court", "only 1 court now") (only from Adam Shin)
 - irrelevant: not about badminton coordination
 
-CRITICAL RULES:
-- Only add guests if they are CONFIRMED to play ("X wants to play", "bringing X", "+X")
+CRITICAL RULES FOR ADDING GUESTS:
+- NEVER add someone just because they are mentioned or tagged (@username)
+- NEVER add someone if message is asking about OTHERS: "do you want to play?", "does X want to join?"
+- NEVER add someone if message contains question words about OTHERS: "do they", "will he", "can she", "would X"
+- ONLY add guests if message explicitly states they WANT to play: "X wants to play", "X is coming", "bringing X", "+X"
+- If message is asking someone ELSE to play, use "irrelevant" - wait for their response
+- If sender is asking to play THEMSELVES ("can I play?", "is there space?"), use "request_spot"
 - If message contains "might", "maybe", "possibly", "thinking", set certainty: "uncertain" and action: "irrelevant"
 - For multiple guests, extract all names into "guestNames" array
 - If message mentions someone else's name and they want to play, use "add_guest" with their name(s)
@@ -414,6 +426,15 @@ CRITICAL RULES:
 - Only use "remove_player" if the SENDER is backing out themselves
 - Only allow "court_update" from Adam Shin
 - Always set "guestName" to the first name mentioned, "guestNames" to all names mentioned
+
+EXAMPLES:
+"Do you want to play @john" → "irrelevant" (asking about others)
+"Can I play?" → "request_spot" (sender asking for themselves)
+"Is there space? I want to join" → "request_spot" (sender asking for themselves)
+"John wants to play" → "add_guest" with guestName: "John"
+"@john are you coming?" → "irrelevant" (asking about others)
+"+john" → "add_guest" with guestName: "john"
+"bringing sarah" → "add_guest" with guestName: "sarah"
 
 Return only valid JSON, no explanations.`;
 
@@ -618,8 +639,8 @@ Return only valid JSON, no explanations.`;
     // Delete the previous status message if it exists
     if (this.lastStatusMessage) {
       try {
-        console.log(`🗑️ Deleting previous status message`);
-        await this.lastStatusMessage.delete();
+        console.log(`🗑️ Deleting previous status message for everyone`);
+        await this.lastStatusMessage.delete(true); // true = delete for everyone
         this.lastStatusMessage = null;
       } catch (deleteError) {
         console.log(
@@ -654,19 +675,13 @@ Return only valid JSON, no explanations.`;
 
     response += `\n*Playing (${this.players.length}):*\n`;
     this.players.forEach((player, index) => {
-      const prefix = player.isGuest
-        ? `${player.name} (guest via ${player.addedBy})`
-        : player.name;
-      response += `${index + 1}. ${prefix}\n`;
+      response += `${index + 1}. ${player.name}\n`;
     });
 
     if (this.waitlist.length > 0) {
       response += `\n*Waitlist (${this.waitlist.length}):*\n`;
       this.waitlist.forEach((player, index) => {
-        const prefix = player.isGuest
-          ? `${player.name} (guest via ${player.addedBy})`
-          : player.name;
-        response += `${index + 1}. ${prefix}\n`;
+        response += `${index + 1}. ${player.name}\n`;
       });
     }
 
