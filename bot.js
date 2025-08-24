@@ -46,8 +46,8 @@ class BadmintonBot {
     this.courtCount = 1; // Manually controlled court count
     this.targetGroup = null;
     this.lastStatusMessage = null; // Track the last status message to delete it
-    this.conversationHistory = []; // Store last 10 messages for context analysis
-    this.maxHistoryLength = 10; // Keep last 10 messages
+    this.conversationHistory = []; // Store last 5 messages for context analysis
+    this.maxHistoryLength = 5; // Keep last 5 messages
 
     this.setupEventHandlers();
   }
@@ -299,48 +299,102 @@ class BadmintonBot {
         .map((msg) => `${msg.sender}: ${msg.message}`)
         .join("\n");
 
-      const prompt = `Analyze conversation for badminton coordination:
+      const prompt = `Analyze this WhatsApp conversation for badminton coordination. The bot manages a badminton playing list.
 
+CONVERSATION:
 ${conversationText}
 
-RULES:
-- Unspecified activities = badminton
-- Non-badminton activities = irrelevant  
-- "so does X", "and X", "+X", "bringing X" = definitive confirmations (always add)
-- Questions about others = wait for their response
-- Same person continuing previous statement = valid addition
+CRITICAL ANALYSIS RULES:
+• Analyze ONLY the LAST message in the conversation - do not be influenced by previous messages
+• Look for contradictory statements that cancel each other out
+• "X wants to [action] BUT [negative condition]" = contradictory = irrelevant
 
-PATTERNS:
-1. Question-Answer (different people): A asks B → B responds "Yes" → add B
-2. Continuation (same person): A says "I play" → A says "so does X" → add X  
-3. Addition phrases: "bringing X", "X wants to play", "+X" → add X
-4. Uncertainty: "might", "maybe" → irrelevant
+STRICT BADMINTON-ONLY RULES:
+• Only process badminton-related activities (default assumption for unspecified activities)
+• Ignore tennis, squash, other sports, dining, social events
+• If activity unclear, assume badminton unless explicitly stated otherwise
 
-JSON format:
+CONFIRMATION LEVELS:
+• CONFIRMED: "yes", "count me in", "I'll come", definitive responses to playing
+• BRINGING/ADDING: "so does X", "and X", "+X", "bringing X", "X wants to play" = definitive confirmations (always add these)  
+• UNCERTAIN: "might", "maybe", "depends", "not sure", "let me check"
+• CONTRADICTORY/NEGATIVE: "wants to but can't", "would like to but can't", "can't make it", "can't play" = irrelevant (do NOT add)
+• Questions about others = ask_availability (do NOT add anyone, wait for their response)
+
+CRITICAL RULE - QUESTIONS:
+• "Can X play?", "Is X available?", "Does X want to play?" = ask_availability (NEVER add the person)
+• Questions should NOT result in adding anyone to the list
+• Wait for the questioned person to respond themselves
+
+CRITICAL RULE - CONDITIONALS:
+• "If X happens, then Y will play" = irrelevant (NEVER add anyone based on conditions)
+• "If Davina is playing, abhi will play" = irrelevant (ignore conditional statements)
+• "X will play if Y plays" = irrelevant (ignore conditional statements)
+• Any statement with "if", "when", "assuming", "provided that" = irrelevant
+• Only process definitive confirmations, not conditional ones
+
+CONTRADICTION DETECTION:
+• "X wants to join but he can't" = contradictory = irrelevant
+• "X would like to play but can't make it" = contradictory = irrelevant  
+• "X wants to come but has other plans" = contradictory = irrelevant
+• If a statement contains BOTH positive intent AND negative outcome, mark as irrelevant
+
+CONVERSATION FLOW PATTERNS:
+1. Question-Answer Flow (different people): Person A asks → Person B responds "Yes" → add Person B as confirmed
+2. Continuation Pattern (same person): Person A says "I want to play" → Person A says "so does mike" → add mike as confirmed  
+3. Direct Addition: "bringing X", "X wants to play", "+X" → add X as confirmed
+4. Uncertainty Responses: "might come", "maybe" → mark as irrelevant, don't add
+
+NAME EXTRACTION:
+• Extract clean first names only (no titles, nicknames in quotes)
+• "my boyfriend", "my friend" without names = ask for clarification
+• Handle multiple names in one message
+• Preserve exact name spelling from conversation
+
+ACTIONS (respond with appropriate action):
+• add_guest: Someone confirmed to play (not the sender)
+• remove_guest: Someone confirmed they can't come (not the sender)
+• request_spot: Sender wants to play themselves  
+• remove_player: Sender backing out themselves
+• ask_availability: Asking if spots available ("anyone playing?", "room for more?")
+• status_inquiry: Asking current status ("who's playing?", "what's the status?")
+• location_update: Changing playing location - "playing at Lions", "we're at Batts", "location is Lions" (ONLY Adam Shin allowed)
+• court_update: Changing court count (ONLY Adam Shin allowed)  
+• irrelevant: Non-badminton or unclear messages
+
+LOCATION DETECTION:
+• "Lions" or "lions" = Lions Club
+• "Batts" or "batts" = Batts Recreation Ground
+• Phrases: "playing at [location]", "we're at [location]", "location is [location]", "[location] this week"
+
+JSON FORMAT:
 {
-  "action": "add_guest|remove_guest|request_spot|remove_player|ask_availability|status_inquiry|location_update|court_update|irrelevant",
-  "confidence": 0.9,
-  "guestName": "name",
+  "action": "action_type",
+  "confidence": 0.8,
+  "location": "Lions|Batts",
+  "guestName": "single_name",
   "guestNames": ["name1", "name2"],
-  "certainty": "confirmed|uncertain",
-  "contextExplanation": "brief reason"
+  "certainty": "confirmed|uncertain", 
+  "contextExplanation": "brief explanation of reasoning"
 }
 
-Actions:
-- add_guest: confirmed wants to play
-- remove_guest: confirmed can't come  
-- request_spot: someone wants to play themselves
-- remove_player: sender backing out themselves
-- ask_availability: asking about spots ("Play?")
-- status_inquiry: asking current status ("Playing?")
-- location_update/court_update: only Adam Shin
-- irrelevant: no clear badminton coordination
-
 EXAMPLES:
-Good: "Do you want to play?" → "Yes" = add_guest
-Good: "I want to play" → "so does mike" = add_guest(mike)
-Good: "Play?" = ask_availability
-Bad: "Want to play tennis?" → "Yes" = irrelevant
+✅ "Do you want to play?" → "Yes" = add_guest
+✅ "I want to play" → "so does mike" = add_guest (mike)
+✅ "bringing sarah" = add_guest (sarah) 
+✅ "Play today?" = ask_availability
+✅ "Can't make it" = remove_player
+✅ "We're playing at Lions this week" (Adam only) = location_update (Lions)
+✅ "Location is Batts" (Adam only) = location_update (Batts)
+❌ "If Davina is playing, abhi will play" = irrelevant (conditional - ignore)
+❌ "John will play if Sarah plays" = irrelevant (conditional - ignore)
+❌ "Phil wants to join but he can't" = irrelevant (contradictory - wants to BUT can't)
+❌ "John would like to play but can't make it" = irrelevant (contradictory - would like BUT can't)
+❌ "Sarah wants to come but has work" = irrelevant (contradictory - wants BUT has conflict)
+❌ "Want to play tennis?" → "Yes" = irrelevant
+❌ "might come" = irrelevant
+
+FOCUS: If the latest message contains "wants/would like to [action] BUT [can't/conflict]", return irrelevant.
 
 Return JSON only.`;
 
@@ -371,6 +425,10 @@ Return JSON only.`;
   }
 
   async handleAnalysisResult(analysis, senderName, message) {
+    console.log(
+      `🔍 handleAnalysisResult called with action: "${analysis.action}"`
+    );
+
     if (analysis.action === "location_update" && senderName === "Adam Shin") {
       this.location = analysis.location;
       console.log(`📍 Location updated to: ${this.location}`);
@@ -399,12 +457,17 @@ Return JSON only.`;
       );
 
       // Handle multiple guests
-      if (analysis.guestNames && analysis.guestNames.length > 1) {
+      if (analysis.guestNames && analysis.guestNames.length > 0) {
+        console.log(`🔍 Processing guestNames array:`, analysis.guestNames);
         analysis.guestNames.forEach((guestName) => {
+          console.log(`🔍 Adding guest from array: ${guestName}`);
           this.addPlayer(guestName, Date.now(), true, guestHost);
         });
       } else if (analysis.guestName) {
+        console.log(`🔍 Adding single guest: ${analysis.guestName}`);
         this.addPlayer(analysis.guestName, Date.now(), true, guestHost);
+      } else {
+        console.log(`⚠️ No guest name found in analysis:`, analysis);
       }
       await this.sendStatusUpdate(message);
       return;
@@ -478,10 +541,7 @@ Return JSON only.`;
       return;
     }
 
-    if (
-      analysis.action === "request_spot" ||
-      analysis.action === "ask_availability"
-    ) {
+    if (analysis.action === "request_spot") {
       // For conversation context, the responder is the one wanting to play
       const playerName = analysis.responder || senderName;
 
@@ -500,6 +560,17 @@ Return JSON only.`;
         }
       }
       await this.sendStatusUpdate(message);
+      return;
+    }
+
+    if (analysis.action === "ask_availability") {
+      // Questions about availability should NOT add anyone
+      // Just wait for the person to respond themselves
+      console.log(
+        `❓ Question about availability for ${
+          analysis.guestName || "someone"
+        } - no action taken`
+      );
       return;
     }
 
@@ -534,36 +605,103 @@ Return JSON only.`;
 
   async analyzeMessageWithAI(messageText, senderName) {
     try {
-      const prompt = `Message: "${messageText}" | Sender: ${senderName}
+      const prompt = `Analyze this WhatsApp message for badminton playing list management.
 
-Analyze for badminton coordination. Return JSON:
+MESSAGE: "${messageText}"
+SENDER: ${senderName}
+
+CRITICAL ANALYSIS RULES:
+• Look for contradictory statements that cancel each other out
+• "X wants to [action] BUT [negative condition]" = contradictory = irrelevant
+• If a statement contains BOTH positive intent AND negative outcome, mark as irrelevant
+• CONDITIONAL STATEMENTS: "If X, then Y will play" = irrelevant (ignore all conditionals)
+• Any statement with "if", "when", "assuming", "provided that" = irrelevant
+
+STRICT BADMINTON-ONLY ANALYSIS:
+• Only process badminton-related activities (default assumption for unspecified activities)
+• Ignore tennis, squash, other sports, dining, social events
+• If activity unclear, assume badminton unless explicitly stated otherwise
+
+CONFIRMATION LEVELS:
+• CONFIRMED: "yes", "count me in", "I'll come", definitive responses to playing
+• BRINGING/ADDING: "so does X", "and X", "+X", "bringing X", "X wants to play" = definitive confirmations (always add these)
+• UNCERTAIN: "might", "maybe", "depends", "not sure", "let me check"
+• CONTRADICTORY/NEGATIVE: "wants to but can't", "would like to but can't", "can't make it", "can't play" = irrelevant (do NOT add)
+
+CONTRADICTION DETECTION:
+• "X wants to join but he can't" = contradictory = irrelevant
+• "X would like to play but can't make it" = contradictory = irrelevant  
+• "X wants to come but has other plans" = contradictory = irrelevant
+
+STRICT RULES:
+• NEVER add someone for questions: "Do you want to play?" = ask_availability (NOT add_guest)
+• NEVER add someone for questions about others: "Can X play?" = ask_availability (NOT add_guest)
+• NEVER add @tagged users unless they respond themselves or explicitly brought by someone
+• NEVER add someone with contradictory statements: "X wants to but can't" = irrelevant
+• "so does X", "bringing X", "+X", "X wants to play" = add_guest (confirmed)
+• "I want to play", "count me in", "I'll play" = request_spot (sender wants to play)
+• "I can't play", "backing out", "can't make it" = remove_player (sender can't play)
+• "might come", "maybe playing" = irrelevant (too uncertain)
+• Questions ending with "?": "Anyone playing?" = ask_availability, "Who's playing?" = status_inquiry, "Can X play?" = ask_availability
+• Only Adam Shin can update location (Batts/Lions) or court count
+• LOCATION DETECTION: "Lions"/"lions" = Lions Club, "Batts"/"batts" = Batts Recreation Ground
+• LOCATION PHRASES: "playing at [location]", "we're at [location]", "[location] this week", "location is [location]"
+• Extract multiple names into guestNames array
+
+CRITICAL QUESTION RULE:
+• Questions about specific people ("Can Andrew play?", "Is Sarah available?") = ask_availability
+• Do NOT add the questioned person to the list - wait for them to respond
+
+CRITICAL CONDITIONAL RULE:
+• "If X happens, then Y will play" = irrelevant (NEVER add anyone based on conditions)
+• "If Davina is playing, abhi will play" = irrelevant (ignore conditional statements)
+• "X will play if Y plays" = irrelevant (ignore conditional statements)
+• Any statement with "if", "when", "assuming", "provided that" = irrelevant
+
+NAME EXTRACTION:
+• Extract clean first names only (no titles, nicknames in quotes)
+• "my boyfriend", "my friend" without names = ask for clarification
+• Handle multiple names in one message
+• Preserve exact name spelling from message
+
+JSON RESPONSE FORMAT:
 {
   "action": "add_guest|remove_guest|request_spot|remove_player|ask_availability|status_inquiry|location_update|court_update|irrelevant",
-  "confidence": 0.9,
-  "guestName": "name",
+  "confidence": 0.8,
+  "location": "Lions|Batts",
+  "guestName": "single_name",
   "guestNames": ["name1", "name2"],
   "certainty": "confirmed|uncertain"
 }
 
-RULES:
-- "so does X", "bringing X", "+X", "X wants to play" = add_guest (confirmed)
-- NEVER add someone for questions: "Do you want to play?" = irrelevant
-- NEVER add @tagged users unless explicitly confirmed
-- "I want to play", "count me in" = request_spot
-- "I can't play", "backing out" = remove_player
-- "might", "maybe" = uncertain → irrelevant
-- Questions ending with "?": "Play?" = ask_availability, "Playing?" = status_inquiry
-- Only Adam Shin can update location (Batts/Lions) or courts
-- Extract multiple names into guestNames array
-
 EXAMPLES:
-"so does nabeel" → add_guest(nabeel, confirmed)
-"bringing mike and sarah" → add_guest(guestNames: [mike, sarah])
-"I want to play" → request_spot
-"Do you want to play?" → irrelevant (question about others)
-"Play?" → ask_availability
-"Playing?" → status_inquiry
-"booked 2 courts" → court_update (Adam only)
+✅ "so does nabeel" → add_guest(nabeel, confirmed)
+✅ "bringing mike and sarah" → add_guest(guestNames: [mike, sarah])
+✅ "+john" → add_guest(john, confirmed)
+✅ "I want to play" → request_spot
+✅ "count me in" → request_spot
+✅ "I can't make it" → remove_player
+✅ "Do you want to play?" → ask_availability (question about others)
+✅ "Anyone playing?" → ask_availability
+✅ "Who's playing?" → status_inquiry
+✅ "Can Andrew play?" → ask_availability (question about specific person - do NOT add Andrew)
+✅ "Is Sarah available?" → ask_availability (question about specific person - do NOT add Sarah)
+✅ "booked 2 courts" (Adam only) → court_update
+✅ "playing at Batts" (Adam only) → location_update (Batts)
+✅ "We're at Lions this week" (Adam only) → location_update (Lions)
+✅ "location is Lions" (Adam only) → location_update (Lions)
+❌ "Do you want to play?" → NOT add_guest
+❌ "Can Andrew play?" → NOT add_guest (wait for Andrew to respond)
+❌ "If Davina is playing, abhi will play" → irrelevant (conditional - ignore)
+❌ "John will play if Sarah plays" → irrelevant (conditional - ignore)
+❌ "When we get to 8 people, mike will join" → irrelevant (conditional - ignore)
+❌ "Phil wants to join but he can't" → irrelevant (contradictory - wants BUT can't)
+❌ "John would like to play but can't make it" → irrelevant (contradictory - would like BUT can't)
+❌ "Sarah wants to come but has work" → irrelevant (contradictory - wants BUT has conflict)
+❌ "might come" → irrelevant
+❌ "playing tennis" → irrelevant
+
+FOCUS: Conditional statements and questions should NOT add anyone. Only definitive confirmations.
 
 Return JSON only.`;
 
@@ -843,58 +981,7 @@ Return JSON only.`;
     console.log(`📋 Monitoring group: ${this.config.groupName}`);
     console.log(`📍 Default location: ${this.config.defaultLocation}`);
 
-    // Add a simple test
-    setTimeout(() => {
-      this.runTestAnalysis();
-    }, 5000);
-
     this.client.initialize();
-  }
-
-  // Test function to verify AI is working
-  async runTestAnalysis() {
-    console.log("\n🧪 Running test analysis...");
-    try {
-      const testMessage = "I want to play";
-      const analysis = await this.analyzeMessageWithAI(testMessage, "TestUser");
-      console.log(`🧪 Test result for "${testMessage}":`, analysis);
-    } catch (error) {
-      console.log(`🧪 Test failed:`, error.message);
-    }
-    console.log("🧪 Test complete\n");
-
-    // Test the specific "so does nabeel" scenario
-    console.log("🧪 Testing 'so does nabeel' scenario...");
-
-    // Simulate conversation history
-    this.conversationHistory = [
-      {
-        sender: "Adam Shin",
-        message: "i want to play",
-        timestamp: new Date().toISOString(),
-      },
-      {
-        sender: "Adam Shin",
-        message: "so does nabeel",
-        timestamp: new Date().toISOString(),
-      },
-    ];
-
-    try {
-      const contextAnalysis = await this.analyzeConversationContext();
-      console.log("🧪 Context analysis result:", contextAnalysis);
-
-      // Also test individual analysis
-      const individualAnalysis = await this.analyzeMessageWithAI(
-        "so does nabeel",
-        "Adam Shin"
-      );
-      console.log("🧪 Individual analysis result:", individualAnalysis);
-    } catch (error) {
-      console.log("🧪 Scenario test failed:", error.message);
-    }
-
-    console.log("🧪 Scenario test complete\n");
   }
 
   // Manual control methods
