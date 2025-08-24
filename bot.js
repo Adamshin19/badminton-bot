@@ -65,7 +65,23 @@ class BadmintonBot {
           from: message.from,
           body: message.body,
           fromMe: message.fromMe,
+          type: message.type, // Added to see message type
+          hasMedia: message.hasMedia,
         });
+
+        // Check if this is a poll message
+        if (message.type === 'poll_creation') {
+          console.log(`📊 Poll created:`, {
+            pollName: message.body,
+            options: message.pollOptions || 'No options found'
+          });
+          // Handle poll creation if it's from you
+          if (message.fromMe && message.body && message.body.toLowerCase().includes('badminton')) {
+            console.log(`🏸 Badminton poll detected, treating as status inquiry`);
+            await this.sendStatusUpdate(message);
+            return;
+          }
+        }
 
         // Process messages from target group OR direct messages for testing
         if (
@@ -241,14 +257,49 @@ class BadmintonBot {
       }
 
       if (analysis.action === "court_update" && senderName === "Adam Shin") {
-        // Only Adam can update court count - looking for messages like "booked 2 courts" or "courts: 2"
-        const courtMatch = messageText.match(
-          /(?:booked?\s+|courts?:?\s*)(\d+)/i
+        // Only Adam can update court count - handle various patterns
+        let newCourtCount = null;
+
+        // Pattern 1: "booked 2 courts", "courts: 2", "2 courts"
+        let courtMatch = messageText.match(
+          /(?:booked?\s+|courts?:?\s*|have\s+)(\d+)/i
         );
         if (courtMatch) {
-          const newCourtCount = parseInt(courtMatch[1]);
+          newCourtCount = parseInt(courtMatch[1]);
+        }
+
+        // Pattern 2: "booked another court" (increment by 1)
+        else if (messageText.match(/booked?\s+(another|one\s+more)\s+court/i)) {
+          newCourtCount = this.courtCount + 1;
+        }
+
+        // Pattern 3: "cancelled a court", "lost a court" (decrement by 1)
+        else if (
+          messageText.match(/cancel(led)?\s+(a\s+)?court|lost\s+(a\s+)?court/i)
+        ) {
+          newCourtCount = Math.max(1, this.courtCount - 1); // Don't go below 1 court
+        }
+
+        // Pattern 4: "we have X courts now", "only X court(s)"
+        else {
+          courtMatch = messageText.match(
+            /(?:we\s+have\s+|only\s+)(\d+)\s+courts?/i
+          );
+          if (courtMatch) {
+            newCourtCount = parseInt(courtMatch[1]);
+          }
+        }
+
+        if (newCourtCount && newCourtCount > 0) {
+          console.log(
+            `🏸 Detected court update: ${this.courtCount} → ${newCourtCount}`
+          );
           this.updateCourtCount(newCourtCount);
           await this.sendStatusUpdate(message);
+        } else {
+          console.log(
+            `⚠️ Court update detected but couldn't parse number from: "${messageText}"`
+          );
         }
         return;
       }
@@ -344,7 +395,7 @@ Actions (use ONLY these):
 - remove_player: sender can't play anymore, backing out
 - ask_availability: asking about spots
 - status_inquiry: asking who's playing/status
-- court_update: sender updating court count with "booked X courts" or "courts: X" (only from Adam Shin)
+- court_update: sender updating court count - booking courts ("booked X courts", "I booked another court") OR cancelling courts ("cancelled a court", "lost a court", "only 1 court now") (only from Adam Shin)
 - irrelevant: not about badminton coordination
 
 CRITICAL RULES:
