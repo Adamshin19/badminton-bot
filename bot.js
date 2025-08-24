@@ -42,6 +42,7 @@ class BadmintonBot {
     this.players = [];
     this.waitlist = [];
     this.location = this.config.defaultLocation;
+    this.courtCount = 1; // Manually controlled court count
     this.targetGroup = null;
 
     this.setupEventHandlers();
@@ -219,8 +220,36 @@ class BadmintonBot {
       }
 
       if (analysis.action === "add_guest") {
-        this.addPlayer(analysis.guestName, Date.now(), true, senderName);
+        // Check for uncertainty
+        if (analysis.certainty === "uncertain") {
+          console.log(
+            `⚠️ Uncertain guest request for ${analysis.guestName}, not adding`
+          );
+          return;
+        }
+
+        // Handle multiple guests
+        if (analysis.guestNames && analysis.guestNames.length > 1) {
+          analysis.guestNames.forEach((guestName) => {
+            this.addPlayer(guestName, Date.now(), true, senderName);
+          });
+        } else if (analysis.guestName) {
+          this.addPlayer(analysis.guestName, Date.now(), true, senderName);
+        }
         await this.sendStatusUpdate(message);
+        return;
+      }
+
+      if (analysis.action === "court_update" && senderName === "Adam Shin") {
+        // Only Adam can update court count - looking for messages like "booked 2 courts" or "courts: 2"
+        const courtMatch = messageText.match(
+          /(?:booked?\s+|courts?:?\s*)(\d+)/i
+        );
+        if (courtMatch) {
+          const newCourtCount = parseInt(courtMatch[1]);
+          this.updateCourtCount(newCourtCount);
+          await this.sendStatusUpdate(message);
+        }
         return;
       }
 
@@ -302,24 +331,31 @@ Analyze ONLY badminton coordination intent. Return valid JSON only:
   "action": "one_of_these_only",
   "confidence": 0.9,
   "location": "Batts",
-  "guestName": "name_of_person_mentioned"
+  "guestName": "name_of_person_mentioned",
+  "guestNames": ["name1", "name2"],
+  "certainty": "confirmed/uncertain"
 }
 
 Actions (use ONLY these):
 - location_update: mentions Batts or Lions
-- add_guest: adding someone (+Name, bringing X, "X wants to play")
+- add_guest: adding someone (ONLY if they DEFINITELY want to play - "X wants to play", "bringing X", "+X")
 - remove_guest: removing guest (X can't come, X doesn't want to play anymore)
 - request_spot: sender wants to play themselves
 - remove_player: sender can't play anymore, backing out
 - ask_availability: asking about spots
 - status_inquiry: asking who's playing/status
+- court_update: sender updating court count with "booked X courts" or "courts: X" (only from Adam Shin)
 - irrelevant: not about badminton coordination
 
-IMPORTANT: 
-- If message mentions someone else's name and they want to play, use "add_guest" with their name
-- If message mentions someone else's name and they can't/don't want to play, use "remove_guest" with their name  
+CRITICAL RULES:
+- Only add guests if they are CONFIRMED to play ("X wants to play", "bringing X", "+X")
+- If message contains "might", "maybe", "possibly", "thinking", set certainty: "uncertain" and action: "irrelevant"
+- For multiple guests, extract all names into "guestNames" array
+- If message mentions someone else's name and they want to play, use "add_guest" with their name(s)
+- If message mentions someone else's name and they can't/don't want to play, use "remove_guest" with their name
 - Only use "remove_player" if the SENDER is backing out themselves
-- Always set "guestName" to the name mentioned in the message (not the sender)
+- Only allow "court_update" from Adam Shin
+- Always set "guestName" to the first name mentioned, "guestNames" to all names mentioned
 
 Return only valid JSON, no explanations.`;
 
@@ -432,8 +468,8 @@ Return only valid JSON, no explanations.`;
       this.players.splice(playerIndex, 1);
       console.log(`❌ Removed ${name} from playing list`);
 
-      // Promote someone from waitlist
-      this.promoteFromWaitlist();
+      // Check if we need to reduce courts and move players to waitlist
+      this.adjustPlayersAfterRemoval();
       return true;
     }
 
@@ -447,6 +483,22 @@ Return only valid JSON, no explanations.`;
 
     console.log(`⚠️  ${name} not found in lists`);
     return false;
+  }
+
+  adjustPlayersAfterRemoval() {
+    const maxAllowedPlayers = this.courtCount * this.config.maxPlayersPerCourt;
+
+    // If we have more players than courts can handle, move excess to waitlist
+    while (this.players.length > maxAllowedPlayers && this.players.length > 0) {
+      const lastPlayer = this.players.pop();
+      this.waitlist.unshift(lastPlayer); // Add to front of waitlist
+      console.log(`↩️ Moved ${lastPlayer.name} back to waitlist`);
+    }
+
+    // Otherwise, promote from waitlist if there's space
+    if (this.players.length < maxAllowedPlayers) {
+      this.promoteFromWaitlist();
+    }
   }
 
   addPlayer(name, timestamp, isGuest, addedBy) {
@@ -467,7 +519,7 @@ Return only valid JSON, no explanations.`;
       console.log(`⏳ Added ${name} to waitlist`);
     }
 
-    this.promoteFromWaitlist();
+    // Don't auto-promote or auto-adjust courts
   }
 
   isPlayerRegistered(name) {
@@ -478,35 +530,20 @@ Return only valid JSON, no explanations.`;
   }
 
   getTotalSpots() {
-    const totalPeople = this.players.length + this.waitlist.length;
-
-    // Court logic: 4-5 people = 1 court, 6-7 people = 1 court (6th+ on waitlist until 8)
-    // 8-10 people = 2 courts, 11th+ on waitlist until 12, then 3 courts, etc.
-
-    if (totalPeople <= 5) {
-      return 5; // 1 court, max 5 people
-    }
-
-    // Calculate how many full courts we can support (min 4 people per court)
-    const fullCourts = Math.floor(totalPeople / 4);
-
-    // Each court can have 4-5 people, so max spots = courts * 5
-    // But we only add a new court when we have enough people (multiple of 4)
-    const maxSpotsForCourts = fullCourts * 5;
-
-    return Math.max(5, maxSpotsForCourts); // At least 1 court (5 spots)
+    // Use manually set court count instead of auto-calculating
+    return this.courtCount * this.config.maxPlayersPerCourt;
   }
 
   getCourtCount() {
-    const totalPeople = this.players.length + this.waitlist.length;
+    // Return manually set court count
+    return this.courtCount;
+  }
 
-    // Court logic: need minimum 4 people to justify a court
-    if (totalPeople <= 5) {
-      return 1;
-    }
-
-    // Calculate courts based on groups of 4 (minimum per court)
-    return Math.floor(totalPeople / 4);
+  getMinimumPlayersNeeded() {
+    // Calculate how many more players needed to justify current courts
+    const minPlayersForCourts = this.courtCount * this.config.playersPerCourt;
+    const currentPlayers = this.players.length + this.waitlist.length;
+    return Math.max(0, minPlayersForCourts - currentPlayers);
   }
 
   promoteFromWaitlist() {
@@ -524,22 +561,28 @@ Return only valid JSON, no explanations.`;
     const totalSpots = this.getTotalSpots();
     const courtCount = this.getCourtCount();
     const availableSpots = totalSpots - totalPlayers;
+    const minPlayersNeeded = this.getMinimumPlayersNeeded();
+    const totalPeopleCommitted = totalPlayers + this.waitlist.length;
 
     let response = `*Current Status:*\n`;
     response += `📍 Location: ${this.location}\n`;
     response += `🏸 Courts: ${courtCount}\n`;
     response += `👥 Players: ${totalPlayers}/${totalSpots}\n`;
 
-    if (availableSpots > 0) {
+    if (minPlayersNeeded > 0) {
+      response += `⚠️ Need ${minPlayersNeeded} more player(s) to justify ${courtCount} court(s)\n`;
+    } else if (availableSpots > 0) {
       response += `✅ Available spots: ${availableSpots}\n`;
+    } else if (this.waitlist.length > 0) {
+      response += `❌ Courts full - ${this.waitlist.length} on waitlist\n`;
     } else {
-      response += `❌ Courts full\n`;
+      response += `✅ Courts full\n`;
     }
 
     response += `\n*Playing (${this.players.length}):*\n`;
     this.players.forEach((player, index) => {
       const prefix = player.isGuest
-        ? `+${player.name} (guest via ${player.addedBy})`
+        ? `${player.name} (guest via ${player.addedBy})`
         : player.name;
       response += `${index + 1}. ${prefix}\n`;
     });
@@ -548,7 +591,7 @@ Return only valid JSON, no explanations.`;
       response += `\n*Waitlist (${this.waitlist.length}):*\n`;
       this.waitlist.forEach((player, index) => {
         const prefix = player.isGuest
-          ? `+${player.name} (guest via ${player.addedBy})`
+          ? `${player.name} (guest via ${player.addedBy})`
           : player.name;
         response += `${index + 1}. ${prefix}\n`;
       });
@@ -603,6 +646,7 @@ Return only valid JSON, no explanations.`;
   async resetGame() {
     this.players = [];
     this.waitlist = [];
+    this.courtCount = 1; // Reset to 1 court
     console.log("🔄 Game state reset");
   }
 
@@ -625,6 +669,24 @@ Return only valid JSON, no explanations.`;
     this.config.groupName = newGroupName;
     console.log(`📋 Updated target group to: ${newGroupName}`);
     this.findTargetGroup();
+  }
+
+  // Manual court management
+  updateCourtCount(newCount) {
+    const oldCount = this.courtCount;
+    this.courtCount = newCount;
+    console.log(`🏸 Court count updated from ${oldCount} to ${newCount}`);
+
+    // Adjust players/waitlist based on new court count
+    if (newCount > oldCount) {
+      // More courts available, promote from waitlist
+      this.promoteFromWaitlist();
+    } else if (newCount < oldCount) {
+      // Fewer courts, may need to move players to waitlist
+      this.adjustPlayersAfterRemoval();
+    }
+
+    return this.showStatus();
   }
 }
 
