@@ -373,24 +373,36 @@ Return only valid JSON, no explanations.`;
     // Someone else wants to play
     if (text.includes("wants to play") || text.includes("want to play")) {
       if (extractedName) {
-        return { action: "add_guest", guestName: extractedName, confidence: 0.8 };
+        return {
+          action: "add_guest",
+          guestName: extractedName,
+          confidence: 0.8,
+        };
       }
       return { action: "request_spot", confidence: 0.8 };
     }
 
     // Someone else can't play / doesn't want to play
     if (
-      (text.includes("can't play") || text.includes("cannot play") || 
-       text.includes("doesn't want to play") || text.includes("does not want to play")) &&
+      (text.includes("can't play") ||
+        text.includes("cannot play") ||
+        text.includes("doesn't want to play") ||
+        text.includes("does not want to play")) &&
       extractedName
     ) {
-      return { action: "remove_guest", guestName: extractedName, confidence: 0.8 };
+      return {
+        action: "remove_guest",
+        guestName: extractedName,
+        confidence: 0.8,
+      };
     }
 
     // Sender backing out
     if (
-      text.includes("i can't play") || text.includes("i cannot play") || 
-      text.includes("not playing") || text.includes("dropping out") || 
+      text.includes("i can't play") ||
+      text.includes("i cannot play") ||
+      text.includes("not playing") ||
+      text.includes("dropping out") ||
       text.includes("backing out")
     ) {
       return { action: "remove_player", confidence: 0.8 };
@@ -406,10 +418,7 @@ Return only valid JSON, no explanations.`;
     }
 
     // Play requests (sender)
-    if (
-      text.includes("can play") ||
-      text.includes("count me")
-    ) {
+    if (text.includes("can play") || text.includes("count me")) {
       return { action: "request_spot", confidence: 0.8 };
     }
 
@@ -470,32 +479,32 @@ Return only valid JSON, no explanations.`;
 
   getTotalSpots() {
     const totalPeople = this.players.length + this.waitlist.length;
-    
+
     // Court logic: 4-5 people = 1 court, 6-7 people = 1 court (6th+ on waitlist until 8)
     // 8-10 people = 2 courts, 11th+ on waitlist until 12, then 3 courts, etc.
-    
+
     if (totalPeople <= 5) {
       return 5; // 1 court, max 5 people
     }
-    
+
     // Calculate how many full courts we can support (min 4 people per court)
     const fullCourts = Math.floor(totalPeople / 4);
-    
+
     // Each court can have 4-5 people, so max spots = courts * 5
     // But we only add a new court when we have enough people (multiple of 4)
     const maxSpotsForCourts = fullCourts * 5;
-    
+
     return Math.max(5, maxSpotsForCourts); // At least 1 court (5 spots)
   }
 
   getCourtCount() {
     const totalPeople = this.players.length + this.waitlist.length;
-    
+
     // Court logic: need minimum 4 people to justify a court
     if (totalPeople <= 5) {
       return 1;
     }
-    
+
     // Calculate courts based on groups of 4 (minimum per court)
     return Math.floor(totalPeople / 4);
   }
