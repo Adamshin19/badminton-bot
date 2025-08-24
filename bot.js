@@ -44,6 +44,7 @@ class BadmintonBot {
     this.location = this.config.defaultLocation;
     this.courtCount = 1; // Manually controlled court count
     this.targetGroup = null;
+    this.lastStatusMessage = null; // Track the last status message to delete it
 
     this.setupEventHandlers();
   }
@@ -70,14 +71,20 @@ class BadmintonBot {
         });
 
         // Check if this is a poll message
-        if (message.type === 'poll_creation') {
+        if (message.type === "poll_creation") {
           console.log(`📊 Poll created:`, {
             pollName: message.body,
-            options: message.pollOptions || 'No options found'
+            options: message.pollOptions || "No options found",
           });
           // Handle poll creation if it's from you
-          if (message.fromMe && message.body && message.body.toLowerCase().includes('badminton')) {
-            console.log(`🏸 Badminton poll detected, treating as status inquiry`);
+          if (
+            message.fromMe &&
+            message.body &&
+            message.body.toLowerCase().includes("badminton")
+          ) {
+            console.log(
+              `🏸 Badminton poll detected, treating as status inquiry`
+            );
             await this.sendStatusUpdate(message);
             return;
           }
@@ -608,6 +615,21 @@ Return only valid JSON, no explanations.`;
   }
 
   async sendStatusUpdate(message) {
+    // Delete the previous status message if it exists
+    if (this.lastStatusMessage) {
+      try {
+        console.log(`🗑️ Deleting previous status message`);
+        await this.lastStatusMessage.delete();
+        this.lastStatusMessage = null;
+      } catch (deleteError) {
+        console.log(
+          `⚠️ Could not delete previous status message:`,
+          deleteError.message
+        );
+        // Continue even if delete fails
+      }
+    }
+
     const totalPlayers = this.players.length;
     const totalSpots = this.getTotalSpots();
     const courtCount = this.getCourtCount();
@@ -650,7 +672,11 @@ Return only valid JSON, no explanations.`;
 
     // Human-like delay
     await this.delay(Math.random() * 2000 + 1000);
-    await message.reply(response);
+
+    // Send the new status message and store it for future deletion
+    const sentMessage = await message.reply(response);
+    this.lastStatusMessage = sentMessage;
+
     console.log(`📤 Sent status update`);
   }
 
@@ -698,6 +724,7 @@ Return only valid JSON, no explanations.`;
     this.players = [];
     this.waitlist = [];
     this.courtCount = 1; // Reset to 1 court
+    this.lastStatusMessage = null; // Clear the last status message reference
     console.log("🔄 Game state reset");
   }
 
