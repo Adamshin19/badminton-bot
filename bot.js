@@ -243,9 +243,10 @@ class BadmintonBot {
         return;
       }
 
-      if (analysis.action === "location_update") {
+      if (analysis.action === "location_update" && senderName === "Adam Shin") {
         this.location = analysis.location;
         console.log(`📍 Location updated to: ${this.location}`);
+        await this.sendStatusUpdate(message);
         return;
       }
 
@@ -402,7 +403,7 @@ Analyze ONLY badminton coordination intent. Return valid JSON only:
 }
 
 Actions (use ONLY these):
-- location_update: mentions Batts or Lions
+- location_update: mentions Batts or Lions (only from Adam Shin)
 - add_guest: adding someone (ONLY if they DEFINITELY want to play - "X wants to play", "bringing X", "+X")
 - remove_guest: removing guest (X can't come, X doesn't want to play anymore)
 - request_spot: sender wants to play themselves
@@ -666,7 +667,7 @@ Return only valid JSON, no explanations.`;
     const totalPeopleCommitted = totalPlayers + this.waitlist.length;
 
     let response = `*Current Status:*\n`;
-    response += `📍 Location: ${this.location}\n`;
+    response += `📍 Location: ${this.location} (9-11 AM Saturday)\n`;
     response += `🏸 Courts: ${courtCount}\n`;
     response += `👥 Players: ${totalPlayers}/${totalSpots}\n`;
 
