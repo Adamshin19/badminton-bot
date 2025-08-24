@@ -419,6 +419,9 @@ CRITICAL RULES FOR ADDING GUESTS:
 - ONLY add guests if message explicitly states they WANT to play: "X wants to play", "X is coming", "bringing X", "+X"
 - If message is asking someone ELSE to play, use "irrelevant" - wait for their response
 - If sender is asking to play THEMSELVES ("can I play?", "is there space?"), use "request_spot"
+- If message ends with "?" it's usually a question - be cautious about treating as confirmation
+- Messages with "?" asking about games/availability should be "ask_availability" or "status_inquiry"
+- Only treat as "request_spot" if message clearly states intent to play ("I want to play", "count me in")
 - If message contains "might", "maybe", "possibly", "thinking", set certainty: "uncertain" and action: "irrelevant"
 - For multiple guests, extract all names into "guestNames" array
 - If message mentions someone else's name and they want to play, use "add_guest" with their name(s)
@@ -429,8 +432,12 @@ CRITICAL RULES FOR ADDING GUESTS:
 
 EXAMPLES:
 "Do you want to play @john" → "irrelevant" (asking about others)
-"Can I play?" → "request_spot" (sender asking for themselves)
-"Is there space? I want to join" → "request_spot" (sender asking for themselves)
+"Play?" → "ask_availability" (asking if there's a game)
+"Playing?" → "status_inquiry" (asking about current status)
+"Can I play?" → "request_spot" (clear request to join)
+"I want to play" → "request_spot" (clear statement of intent)
+"Is there space? I want to join" → "request_spot" (clear intent stated)
+"Play" → "request_spot" (statement, not question)
 "John wants to play" → "add_guest" with guestName: "John"
 "@john are you coming?" → "irrelevant" (asking about others)
 "+john" → "add_guest" with guestName: "john"
