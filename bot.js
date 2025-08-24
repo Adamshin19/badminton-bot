@@ -44,6 +44,8 @@ class BadmintonBot {
     this.location = this.config.defaultLocation;
     this.courtCount = 1; // Manually controlled court count
     this.targetGroup = null;
+    this.activePoll = null;
+    this.pollMonitoringInterval = null;
 
     this.setupEventHandlers();
   }
@@ -69,18 +71,65 @@ class BadmintonBot {
           hasMedia: message.hasMedia,
         });
 
+        // Check for poll vote messages (these might be separate message types)
+        if (message.type === "poll_vote" || message.type === "poll_response") {
+          console.log(`🗳️ Poll vote message detected:`, {
+            type: message.type,
+            from: message.from,
+            body: message.body,
+            pollData: message._data,
+          });
+
+          // Try to process this as a poll vote
+          if (message._data && message._data.pollVote) {
+            console.log(
+              `🗳️ Processing poll vote from message_create:`,
+              message._data.pollVote
+            );
+            await this.processPollVoteFromMessage(message);
+          }
+          return;
+        }
+
         // Check if this is a poll message
-        if (message.type === 'poll_creation') {
+        if (message.type === "poll_creation") {
           console.log(`📊 Poll created:`, {
             pollName: message.body,
-            options: message.pollOptions || 'No options found'
+            options: message.pollOptions || "No options found",
           });
-          // Handle poll creation if it's from you
-          if (message.fromMe && message.body && message.body.toLowerCase().includes('badminton')) {
-            console.log(`🏸 Badminton poll detected, treating as status inquiry`);
+          // Handle poll creation if it's from you and contains badminton keywords
+          if (
+            message.fromMe &&
+            message.body &&
+            (message.body.toLowerCase().includes("badminton") ||
+              message.body.toLowerCase().includes("batts") ||
+              message.body.toLowerCase().includes("lions"))
+          ) {
+            console.log(`🏸 Badminton poll detected, sending status update`);
             await this.sendStatusUpdate(message);
+
+            // Store poll for monitoring
+            this.activePoll = {
+              id: message.id._serialized,
+              message: message,
+              lastCheckTime: Date.now(),
+            };
+
+            // Start monitoring this poll for votes
+            this.startPollMonitoring(message);
             return;
           }
+        }
+
+        // Check if this is an update to an existing poll message
+        if (
+          message.type === "poll_creation" &&
+          this.activePoll &&
+          message.id._serialized === this.activePoll.id
+        ) {
+          console.log(`📊 Poll update detected for active poll`);
+          await this.checkForPollVotes(message);
+          return;
         }
 
         // Process messages from target group OR direct messages for testing
@@ -105,6 +154,21 @@ class BadmintonBot {
             return;
           }
 
+          // Add fallback pattern matching for Adam's court updates
+          if (message.fromMe && message.body) {
+            const fallbackCourtUpdate = this.checkFallbackCourtUpdate(
+              message.body
+            );
+            if (fallbackCourtUpdate) {
+              console.log(
+                `🏸 Fallback court update detected: ${fallbackCourtUpdate.action} → ${fallbackCourtUpdate.newCount}`
+              );
+              this.updateCourtCount(fallbackCourtUpdate.newCount);
+              await this.sendStatusUpdate(message);
+              return;
+            }
+          }
+
           await this.handleMessage(message);
         }
       } catch (error) {
@@ -127,21 +191,261 @@ class BadmintonBot {
 
     this.client.on("poll_vote", async (vote) => {
       try {
-        console.log(`🗳️ Poll vote detected from voter: ${vote.voter.id.user}`);
+        console.log(`🗳️ Poll vote detected:`, {
+          voter: vote.voter.id.user,
+          selectedOptions: vote.selectedOptions,
+          parentMessageFrom: vote.parentMessage
+            ? vote.parentMessage.from
+            : "No parent message",
+        });
+
+        // Handle votes from target group OR direct messages for testing
         if (
-          this.targetGroup &&
-          vote.parentMessage &&
-          vote.parentMessage.from === this.targetGroup.id._serialized
+          (this.targetGroup &&
+            vote.parentMessage &&
+            vote.parentMessage.from === this.targetGroup.id._serialized) ||
+          (vote.parentMessage && vote.parentMessage.from.endsWith("@lid")) // Direct message polls
         ) {
-          console.log(`✅ Processing poll vote in target group`);
+          console.log(
+            `✅ Processing poll vote in target group or direct message`
+          );
           await this.handlePollVote(vote);
         } else {
-          console.log(`⚠️ Poll vote not from target group`);
+          console.log(`⚠️ Poll vote not from target group or direct message`);
         }
       } catch (error) {
         console.error("Error in poll vote handler:", error);
       }
     });
+
+    // Add listener for poll creation
+    this.client.on("poll", async (poll) => {
+      try {
+        console.log(`📊 Poll created via 'poll' event:`, {
+          id: poll.id,
+          body: poll.body,
+          from: poll.from,
+          options: poll.options,
+        });
+      } catch (error) {
+        console.error("Error in poll creation handler:", error);
+      }
+    });
+
+    // Add comprehensive event debugging to catch poll votes
+    this.client.on("vote_update", async (vote) => {
+      console.log(`🗳️ Vote update event:`, vote);
+      await this.handlePollVote(vote);
+    });
+
+    // Try alternative event names for poll votes
+    [
+      "poll_response",
+      "poll_answer",
+      "message_poll_vote",
+      "vote",
+      "poll_vote_update",
+      "poll_vote_response",
+      "pollVote",
+      "vote_received",
+      "poll_changed",
+      "poll_updated",
+    ].forEach((eventName) => {
+      this.client.on(eventName, async (data) => {
+        console.log(`🗳️ Poll event '${eventName}':`, data);
+        if (
+          data &&
+          typeof data === "object" &&
+          (data.voter || data.selectedOptions || data.pollVote)
+        ) {
+          await this.handlePollVote(data);
+        }
+      });
+    });
+
+    // Monitor for any changes to messages that might indicate poll votes
+    this.client.on("message_revoke_everyone", async (message) => {
+      console.log(`🔄 Message revoked:`, {
+        from: message.from,
+        type: message.type,
+        body: message.body,
+      });
+    });
+
+    this.client.on("message_edit", async (message, newBody, prevBody) => {
+      console.log(`✏️ Message edited:`, {
+        from: message.from,
+        type: message.type,
+        newBody,
+        prevBody,
+      });
+
+      // Check if this is a poll message being edited (might contain vote updates)
+      if (message.type === "poll_creation") {
+        console.log(`📊 Poll message edited - checking for vote changes`);
+        await this.checkForPollVotes(message);
+      }
+    });
+
+    // Try to catch message media events (sometimes poll votes are media)
+    this.client.on("media_uploaded", async (message) => {
+      console.log(`📎 Media uploaded:`, {
+        from: message.from,
+        type: message.type,
+        hasMedia: message.hasMedia,
+      });
+    });
+
+    // Monitor group events that might be related to polls
+    this.client.on("group_update", async (update) => {
+      console.log(`👥 Group update:`, update);
+    });
+
+    // Debug: Log all events to find poll vote events
+    const originalEmit = this.client.emit;
+    const self = this; // Store reference to this
+    this.client.emit = function (event, ...args) {
+      // Log ALL events to see what we're missing
+      if (event) {
+        // Only log non-spam events to reduce noise
+        if (!event.includes("loading") && !event.includes("progress")) {
+          console.log(`🔍 All events: ${event}`);
+        }
+
+        // Focus on poll/vote/message events with more detail
+        if (
+          event.includes("poll") ||
+          event.includes("vote") ||
+          event.includes("message") ||
+          event.includes("update") ||
+          event.includes("change") ||
+          event.includes("response") ||
+          event.includes("answer")
+        ) {
+          console.log(
+            `🔍 Event detected: ${event}`,
+            args.length > 0
+              ? args[0] && args[0].type
+                ? `(type: ${args[0].type})`
+                : "data available"
+              : "no data"
+          );
+
+          // Log detailed data for poll/vote events
+          if (event.includes("poll") || event.includes("vote")) {
+            console.log(`🔍 ${event} detailed data:`, args[0]);
+          }
+
+          // Special handling for message_ack events on poll messages
+          if (
+            event === "message_ack" &&
+            args[0] &&
+            args[0].type === "poll_creation"
+          ) {
+            console.log(
+              `🔍 Poll message ACK detected - checking for vote changes`
+            );
+            // Schedule a poll vote check
+            setTimeout(async () => {
+              try {
+                const pollMessage = args[0];
+                console.log(
+                  `🔍 Delayed poll vote check for:`,
+                  pollMessage.body
+                );
+                await self.checkForPollVotes(pollMessage);
+              } catch (error) {
+                console.error("Error in delayed poll check:", error);
+              }
+            }, 1000); // Wait 1 second to allow vote data to propagate
+          }
+
+          // Check for any message updates that might contain poll vote data
+          if (event.includes("message") && args[0] && args[0]._data) {
+            const data = args[0]._data;
+            if (
+              data.pollVotesSnapshot ||
+              data.pollOptions ||
+              data.pollVotes ||
+              data.pollVote
+            ) {
+              console.log(`🔍 Poll data detected in ${event}:`, {
+                pollVotesSnapshot: data.pollVotesSnapshot,
+                pollOptions: data.pollOptions,
+                pollVotes: data.pollVotes,
+                pollVote: data.pollVote,
+              });
+            }
+          }
+
+          // Check for vote-specific events
+          if (event.includes("vote")) {
+            console.log(
+              `🗳️ Vote event data structure:`,
+              JSON.stringify(args[0], null, 2)
+            );
+
+            // Try to process this vote
+            if (
+              args[0] &&
+              (args[0].voter || args[0].selectedOptions || args[0].pollVote)
+            ) {
+              console.log(`🗳️ Attempting to process vote from ${event}...`);
+              // Use setTimeout to handle async in non-async function
+              setTimeout(async () => {
+                try {
+                  await self.handlePollVote(args[0]);
+                } catch (voteError) {
+                  console.error(
+                    `Error processing vote from ${event}:`,
+                    voteError
+                  );
+                }
+              }, 0);
+            }
+          }
+        }
+      }
+      return originalEmit.apply(this, arguments);
+    };
+  }
+
+  // Fallback pattern matching for court updates when AI fails
+  checkFallbackCourtUpdate(messageText) {
+    if (!messageText) return null;
+
+    const text = messageText.toLowerCase();
+    let newCourtCount = null;
+
+    // Pattern 1: "booked 2 courts", "courts: 2", "2 courts"
+    let courtMatch = text.match(/(?:booked?\s+|courts?:?\s*|have\s+)(\d+)/i);
+    if (courtMatch) {
+      newCourtCount = parseInt(courtMatch[1]);
+      return { action: "set_courts", newCount: newCourtCount };
+    }
+
+    // Pattern 2: "booked another court" (increment by 1)
+    else if (text.match(/booked?\s+(another|one\s+more)\s+court/i)) {
+      newCourtCount = this.courtCount + 1;
+      return { action: "add_court", newCount: newCourtCount };
+    }
+
+    // Pattern 3: "cancelled a court", "lost a court" (decrement by 1)
+    else if (text.match(/cancel(led)?\s+(a\s+)?court|lost\s+(a\s+)?court/i)) {
+      newCourtCount = Math.max(1, this.courtCount - 1);
+      return { action: "cancel_court", newCount: newCourtCount };
+    }
+
+    // Pattern 4: "we have X courts now", "only X court(s)"
+    else {
+      courtMatch = text.match(/(?:we\s+have\s+|only\s+)(\d+)\s+courts?/i);
+      if (courtMatch) {
+        newCourtCount = parseInt(courtMatch[1]);
+        return { action: "set_courts", newCount: newCourtCount };
+      }
+    }
+
+    return null;
   }
 
   async findTargetGroup() {
@@ -182,24 +486,429 @@ class BadmintonBot {
     }
   }
 
+  async processPollVoteFromMessage(message) {
+    try {
+      console.log(`🗳️ Processing poll vote from message...`);
+      console.log(`🔍 Message data:`, JSON.stringify(message._data, null, 2));
+
+      // Try to extract poll vote information
+      const pollVoteData = message._data.pollVote || message._data;
+      const voterId = message.from;
+      const contact = await message.getContact();
+      const voterName = contact.pushname || contact.name || contact.id.user;
+
+      console.log(`👤 Voter: ${voterName} (${voterId})`);
+
+      // If this is related to our active poll
+      if (this.activePoll) {
+        console.log(`🔍 Checking if vote is for active poll...`);
+
+        // Try to determine if this is a "Yes" vote
+        // This will depend on the actual structure of pollVoteData
+        let isYesVote = false;
+
+        if (
+          pollVoteData.selectedOptions &&
+          pollVoteData.selectedOptions.includes(0)
+        ) {
+          isYesVote = true;
+        } else if (pollVoteData.optionLocalId === 0) {
+          isYesVote = true;
+        } else if (pollVoteData.vote === 0 || pollVoteData.choice === 0) {
+          isYesVote = true;
+        }
+
+        console.log(`🔍 Is YES vote: ${isYesVote}`);
+
+        if (isYesVote) {
+          console.log(`✅ ${voterName} voted YES, adding to game`);
+
+          if (!this.isPlayerRegistered(voterName)) {
+            this.addPlayer(voterName, Date.now(), false, null);
+            console.log(`✅ Added ${voterName} from poll vote`);
+
+            // Send status update
+            await this.sendStatusUpdate(this.activePoll.message);
+          } else {
+            console.log(`⚠️ ${voterName} already registered, not adding again`);
+          }
+        } else {
+          console.log(`❌ ${voterName} voted NO, not adding to game`);
+        }
+      }
+    } catch (error) {
+      console.error("Error processing poll vote from message:", error);
+    }
+  }
+
   async handlePollVote(vote) {
     try {
+      console.log(`🗳️ Processing poll vote...`);
       const contact = await vote.voter.getContact();
       const voterName = contact.pushname || contact.name || vote.voter.id.user;
 
+      console.log(`👤 Voter: ${voterName}`);
+      console.log(`📊 Selected options:`, vote.selectedOptions);
+
+      // Get the poll message details
+      const pollMessage = vote.parentMessage;
+      console.log(`📋 Poll message body:`, pollMessage.body);
+
       // Use AI to determine if this is a positive vote
-      const pollMessage = await vote.parentMessage.body;
       const isPositiveVote = await this.analyzeVoteWithAI(
-        pollMessage,
+        pollMessage.body,
         vote.selectedOptions
       );
 
+      console.log(`🤖 AI determined positive vote: ${isPositiveVote}`);
+
       if (isPositiveVote) {
-        this.addPlayer(voterName, Date.now(), false, null);
-        console.log(`✅ Added ${voterName} from poll vote`);
+        // Don't add the voter if they're already registered
+        if (!this.isPlayerRegistered(voterName)) {
+          this.addPlayer(voterName, Date.now(), false, null);
+          console.log(`✅ Added ${voterName} from poll vote`);
+
+          // Send status update
+          await this.sendStatusUpdate(pollMessage);
+        } else {
+          console.log(`⚠️ ${voterName} already registered, not adding again`);
+        }
+      } else {
+        console.log(`❌ Vote from ${voterName} was not considered positive`);
       }
     } catch (error) {
       console.error("Error handling poll vote:", error);
+    }
+  }
+
+  // Alternative approach: Monitor poll for changes with more aggressive detection
+  startPollMonitoring(pollMessage) {
+    console.log(`🔍 Starting poll monitoring for poll: ${pollMessage.body}`);
+
+    // Store the original poll state
+    let lastVoteCount = 0;
+    let processedVoters = new Set();
+    let lastPollData = null;
+
+    // Check every 3 seconds for poll changes (more frequent)
+    this.pollMonitoringInterval = setInterval(async () => {
+      try {
+        console.log(`🔍 Checking poll for votes...`);
+
+        // Try to get updated message using different methods
+        const chat = await pollMessage.getChat();
+
+        // Method 1: Fetch messages and find our poll
+        const messages = await chat.fetchMessages({ limit: 50 });
+        const updatedPoll = messages.find(
+          (msg) => msg.id._serialized === pollMessage.id._serialized
+        );
+
+        if (updatedPoll) {
+          console.log(`📊 Found updated poll message`);
+
+          // Log the complete poll data structure for debugging
+          if (updatedPoll._data) {
+            console.log(`🔍 Poll _data keys:`, Object.keys(updatedPoll._data));
+
+            // Check for any vote-related properties
+            const voteProps = Object.keys(updatedPoll._data).filter(
+              (key) =>
+                key.toLowerCase().includes("vote") ||
+                key.toLowerCase().includes("poll") ||
+                key.toLowerCase().includes("response") ||
+                key.toLowerCase().includes("answer")
+            );
+            console.log(`🔍 Vote-related properties:`, voteProps);
+
+            voteProps.forEach((prop) => {
+              console.log(`🔍 ${prop}:`, updatedPoll._data[prop]);
+            });
+          }
+
+          await this.checkForPollVotes(updatedPoll);
+
+          // Method 2: Check poll options for vote counts
+          if (updatedPoll.pollOptions) {
+            let totalVotes = 0;
+            updatedPoll.pollOptions.forEach((option, index) => {
+              const votes = option.votes || option.voteCount || 0;
+              totalVotes += votes;
+              if (votes > 0) {
+                console.log(
+                  `📊 Option ${index} "${option.name}": ${votes} votes`
+                );
+              }
+            });
+
+            if (totalVotes > lastVoteCount) {
+              console.log(
+                `🗳️ Vote count changed from ${lastVoteCount} to ${totalVotes}`
+              );
+              lastVoteCount = totalVotes;
+
+              // If "Yes" option (index 0) has votes, we need to find who voted
+              const yesVotes = updatedPoll.pollOptions[0]?.votes || 0;
+              if (yesVotes > 0) {
+                console.log(
+                  `✅ ${yesVotes} people voted YES - trying to identify voters`
+                );
+                // This is tricky without voter IDs, so let's try other methods
+              }
+            }
+          }
+
+          // Method 3: Try to get poll data directly from the message
+          if (updatedPoll._data && updatedPoll._data.pollVotesSnapshot) {
+            const currentVotes =
+              updatedPoll._data.pollVotesSnapshot.pollVotes || [];
+            console.log(
+              `🔍 pollVotesSnapshot has ${currentVotes.length} votes`
+            );
+
+            if (currentVotes.length > 0) {
+              console.log(
+                `🔍 Vote data:`,
+                JSON.stringify(currentVotes, null, 2)
+              );
+            }
+
+            if (currentVotes.length > lastVoteCount) {
+              console.log(
+                `🗳️ New votes detected! ${currentVotes.length} total votes`
+              );
+              lastVoteCount = currentVotes.length;
+
+              // Process new votes
+              for (const vote of currentVotes) {
+                console.log(`🔍 Processing vote:`, vote);
+                const voterId =
+                  vote.sender || vote.voter || vote.senderJid || vote.from;
+                if (voterId && !processedVoters.has(voterId)) {
+                  console.log(`🗳️ Processing new vote from: ${voterId}`);
+                  processedVoters.add(voterId);
+
+                  // Extract the voter name and process the vote
+                  try {
+                    const contact = await this.client.getContactById(voterId);
+                    const voterName =
+                      contact.pushname || contact.name || voterId.split("@")[0];
+
+                    // Check if it's a "Yes" vote (option 0)
+                    const selectedOption = vote.selectedOptions
+                      ? vote.selectedOptions[0]
+                      : vote.selectedOption;
+
+                    console.log(
+                      `🔍 Voter: ${voterName}, Selected option: ${selectedOption}`
+                    );
+
+                    if (selectedOption === 0 || selectedOption === "0") {
+                      console.log(`✅ ${voterName} voted YES, adding to game`);
+
+                      if (!this.isPlayerRegistered(voterName)) {
+                        this.addPlayer(voterName, Date.now(), false, null);
+                        console.log(`✅ Added ${voterName} from poll vote`);
+
+                        // Send status update
+                        await this.sendStatusUpdate(pollMessage);
+                      } else {
+                        console.log(
+                          `⚠️ ${voterName} already registered, not adding again`
+                        );
+                      }
+                    } else {
+                      console.log(
+                        `❌ ${voterName} voted NO, not adding to game`
+                      );
+                    }
+                  } catch (contactError) {
+                    console.error(
+                      `Error getting contact for ${voterId}:`,
+                      contactError
+                    );
+                  }
+                }
+              }
+            }
+          }
+
+          // Method 4: Check for changes in the raw message data
+          const currentPollData = JSON.stringify(updatedPoll._data);
+          if (lastPollData && currentPollData !== lastPollData) {
+            console.log(`🔍 Poll data changed - something happened!`);
+            // Compare the differences
+            if (updatedPoll._data && lastPollData) {
+              console.log(
+                `🔍 Poll message updated, checking for differences...`
+              );
+            }
+          }
+          lastPollData = currentPollData;
+        } else {
+          console.log(`⚠️ Could not find updated poll message`);
+        }
+      } catch (error) {
+        console.error("Error monitoring poll:", error);
+      }
+    }, 3000); // Check every 3 seconds
+
+    // Stop monitoring after 2 hours
+    setTimeout(() => {
+      if (this.pollMonitoringInterval) {
+        clearInterval(this.pollMonitoringInterval);
+        this.pollMonitoringInterval = null;
+        console.log(`⏰ Stopped monitoring poll after 2 hours`);
+      }
+    }, 2 * 60 * 60 * 1000);
+  }
+
+  async checkForPollVotes(pollMessage) {
+    try {
+      console.log(`🔍 Checking for poll votes in message...`);
+
+      // Log all available properties to understand the structure
+      console.log(`📊 Poll message properties:`, Object.keys(pollMessage));
+
+      // Method 1: Check for poll data in different locations
+      if (pollMessage._data && pollMessage._data.pollVotesSnapshot) {
+        console.log(
+          `📊 Found pollVotesSnapshot:`,
+          pollMessage._data.pollVotesSnapshot
+        );
+
+        if (
+          pollMessage._data.pollVotesSnapshot.pollVotes &&
+          pollMessage._data.pollVotesSnapshot.pollVotes.length > 0
+        ) {
+          console.log(
+            `🗳️ Found ${pollMessage._data.pollVotesSnapshot.pollVotes.length} votes!`
+          );
+
+          // Process each vote
+          for (const vote of pollMessage._data.pollVotesSnapshot.pollVotes) {
+            console.log(`🗳️ Processing vote:`, vote);
+
+            // Extract voter information
+            const voterId = vote.sender || vote.voter;
+            const selectedOptions = vote.selectedOptions || [
+              vote.selectedOption,
+            ];
+
+            if (voterId && selectedOptions) {
+              console.log(
+                `👤 Voter ID: ${voterId}, Selected: ${selectedOptions}`
+              );
+
+              // Create a mock vote object for our existing handler
+              const mockVote = {
+                voter: { id: { user: voterId } },
+                selectedOptions: selectedOptions,
+                parentMessage: pollMessage,
+              };
+
+              await this.handlePollVote(mockVote);
+            }
+          }
+        } else {
+          console.log(`📊 No votes found in pollVotesSnapshot`);
+        }
+      }
+
+      // Method 2: Check the direct poll property
+      if (pollMessage.poll) {
+        console.log(`📊 Poll object found:`, pollMessage.poll);
+
+        if (pollMessage.poll.options) {
+          pollMessage.poll.options.forEach((option, index) => {
+            console.log(
+              `📊 Option ${index}: ${option.name} - Votes: ${option.votes || 0}`
+            );
+
+            if (option.votes && option.votes.length > 0) {
+              option.votes.forEach((vote) => {
+                console.log(`🗳️ Vote from: ${vote.sender}`);
+                // Process this vote too
+              });
+            }
+          });
+        }
+      }
+
+      // Method 3: Check pollOptions with vote counts
+      if (pollMessage.pollOptions) {
+        console.log(`📊 PollOptions found:`, pollMessage.pollOptions);
+        pollMessage.pollOptions.forEach((option, index) => {
+          if (option.votes) {
+            console.log(
+              `📊 Option ${index} (${option.name}): ${option.votes} votes`
+            );
+          }
+        });
+      }
+
+      // Method 4: Try to access poll votes through different WhatsApp Web.js methods
+      try {
+        // Try to get poll data using WhatsApp Web.js internal methods
+        if (pollMessage.getVotesData) {
+          console.log(`🔍 Trying getVotesData method...`);
+          const votesData = await pollMessage.getVotesData();
+          console.log(`📊 Votes data from getVotesData:`, votesData);
+        }
+      } catch (methodError) {
+        console.log(
+          `⚠️ getVotesData method not available:`,
+          methodError.message
+        );
+      }
+
+      // Method 5: Try to manually parse the message data for any vote information
+      if (pollMessage._data) {
+        console.log(`🔍 Searching for vote data in _data...`);
+        const dataString = JSON.stringify(pollMessage._data);
+
+        // Look for vote-related keywords in the data
+        const voteKeywords = [
+          "vote",
+          "voter",
+          "option",
+          "selected",
+          "choice",
+          "answer",
+        ];
+        voteKeywords.forEach((keyword) => {
+          if (dataString.toLowerCase().includes(keyword)) {
+            console.log(`🔍 Found keyword "${keyword}" in poll data`);
+          }
+        });
+
+        // Check for any arrays that might contain vote data
+        Object.keys(pollMessage._data).forEach((key) => {
+          const value = pollMessage._data[key];
+          if (Array.isArray(value) && value.length > 0) {
+            console.log(`🔍 Array property "${key}":`, value);
+          }
+        });
+      }
+
+      // Method 6: Log the complete poll message structure periodically for debugging
+      if (Math.random() < 0.1) {
+        // 10% chance to reduce spam
+        console.log(
+          `🔍 Complete poll message structure:`,
+          JSON.stringify(pollMessage._data, null, 2)
+        );
+      }
+
+      if (
+        !pollMessage.poll &&
+        !pollMessage._data?.pollVotesSnapshot &&
+        !pollMessage.pollOptions
+      ) {
+        console.log(`⚠️ No poll data found in any expected location`);
+      }
+    } catch (error) {
+      console.error("Error checking poll votes:", error);
     }
   }
 
