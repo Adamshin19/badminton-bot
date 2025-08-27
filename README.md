@@ -50,16 +50,11 @@ EOF
 **Windows:**
 
 ```cmd
-# Automatic setup with script
+# Simple startup
 start.bat
-
-# Or manual setup - create .env file with:
-OPENAI_API_KEY=your_api_key_here
-GROUP_NAME=your_whatsapp_group_name
-DEFAULT_LOCATION=Batts
-PLAYERS_PER_COURT=4
-MAX_PLAYERS_PER_COURT=5
 ```
+
+**Note**: Edit the `OPENAI_API_KEY` directly in `start.bat` on line 20.
 
 ### 3. Start the Bot
 
@@ -76,11 +71,8 @@ npm start
 **Windows:**
 
 ```cmd
-# Optimized startup (recommended)
+# Simple startup
 start.bat
-
-# Or standard startup
-npm start
 ```
 
 ### 4. Monitor Resources (Optional)
@@ -164,17 +156,18 @@ The bot automatically configures based on your `.env` file. Available settings:
 
 **Windows:**
 
-- Use `start.bat` and `monitor.bat` scripts
+- Use `start.bat` script for simple startup
+- Edit the API key directly in the batch file (line 20)
 - Chrome typically installed at: `C:\Program Files\Google\Chrome\Application\`
 
 **macOS:**
 
-- Use `start.sh` and `monitor.sh` scripts
+- Use `start.sh` and direnv with `.envrc`
 - Chrome typically installed at: `/Applications/Google Chrome.app/`
 
 **Linux:**
 
-- Use `start.sh` and `monitor.sh` scripts
+- Use `start.sh` and direnv with `.envrc`
 - Chrome typically installed at: `/usr/bin/google-chrome-stable`
 
 ## Version History
