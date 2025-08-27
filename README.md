@@ -1,27 +1,27 @@
 # Badminton Bot 🏸
 
-An intelligent WhatsApp bot for managing badminton group coordination and player lists.
+An intelligent WhatsApp bot that automatically manages badminton group coordination and player lists using AI.
 
 ## Features
 
-✅ **AI-Powered Message Analysis** - Uses OpenAI to understand natural language messages  
-✅ **Automatic Player Management** - Tracks players and waitlists  
-✅ **Guest Management** - Handle guest additions via other players  
-✅ **Smart Court Allocation** - Dynamic court booking based on player count  
-✅ **Location Tracking** - Supports multiple venues (Batts, Lions, etc.)  
-✅ **Poll Vote Integration** - Responds to WhatsApp poll votes  
-✅ **Waitlist Management** - Automatic promotion when spots open up  
-✅ **Ultra-Low Memory Usage** - Optimized to run on minimal resources
+✅ **AI-Powered Message Understanding** - Uses OpenAI to interpret natural language messages  
+✅ **Automatic Player Management** - Tracks players and waitlists automatically  
+✅ **Guest Management** - Handle guest additions through other players  
+✅ **Smart Court Allocation** - Dynamically assigns courts based on player count  
+✅ **Location Support** - Supports multiple venues (Batts, Lions, etc.)  
+✅ **Poll Integration** - Responds to WhatsApp poll votes  
+✅ **Waitlist Management** - Automatically promotes players when spots open  
+✅ **Ultra-Low Resource Usage** - Optimized for minimal memory and power consumption
 
-## Quick Start (Cross-Platform)
+## Quick Start
 
 ### Prerequisites
 
-- Node.js 18+
-- Google Chrome browser
-- OpenAI API key
+- **Node.js 18+** - [Download here](https://nodejs.org/)
+- **Google Chrome** - [Download here](https://www.google.com/chrome/)
+- **OpenAI API Key** - [Get one here](https://platform.openai.com/api-keys)
 
-### 1. Clone and Install
+### Installation
 
 ```bash
 git clone https://github.com/Adamshin19/badminton-bot.git
@@ -29,153 +29,94 @@ cd badminton-bot
 npm install
 ```
 
-### 2. Configure Environment
-
-**macOS/Linux:**
-
-```bash
-# Automatic setup with script
-./start.sh
-
-# Or manual setup
-cat > .env << EOF
-OPENAI_API_KEY=your_api_key_here
-GROUP_NAME=your_whatsapp_group_name
-DEFAULT_LOCATION=Batts
-PLAYERS_PER_COURT=4
-MAX_PLAYERS_PER_COURT=5
-EOF
-```
+### Setup & Run
 
 **Windows:**
 
-```cmd
-# Simple startup
-start.bat
-```
-
-**Note**: Edit the `OPENAI_API_KEY` directly in `start.bat` on line 20.
-
-### 3. Start the Bot
+1. Edit `start.bat` - Replace `YOUR_API_KEY_HERE` with your OpenAI API key
+2. Run: `start.bat`
 
 **macOS/Linux:**
 
-```bash
-# Optimized startup (recommended)
-./start.sh
+1. Install direnv: `brew install direnv`
+2. Edit `.envrc` - Replace the API key with yours
+3. Run: `direnv allow .`
+4. Run: `./start.sh`
 
-# Or standard startup
-npm start
-```
+### First Time Setup
 
-**Windows:**
+1. **QR Code** - Scan the QR code with WhatsApp to authenticate
+2. **Group Selection** - Bot will automatically find and connect to "Adam test" group
+3. **Ready!** - Bot is now monitoring messages and managing players
 
-```cmd
-# Simple startup
-start.bat
-```
+## Usage Examples
 
-### 4. Monitor Resources (Optional)
+The bot understands natural language messages:
 
-**macOS/Linux:**
-
-```bash
-./monitor.sh
-```
-
-**Windows:**
-
-```cmd
-monitor.bat
-```
-
-### 4. Authenticate WhatsApp
-
-- QR code will appear in the terminal
-- Scan with your WhatsApp to authenticate
-- Session will be saved for future runs
-
-## Resource Usage ⚡
-
-**Memory Usage**: ~50-100MB (vs 600-800MB with Docker)  
-**CPU Usage**: Minimal when idle, moderate during message processing  
-**Disk Usage**: ~200MB for dependencies + ~50MB for session data
-
-### Why No Docker?
-
-Docker adds 600-800MB overhead for a simple Node.js bot. This optimized setup:
-
-- Uses **85% less memory** than Docker
-- **Faster startup** (no container overhead)
-- **Direct Chrome access** (no virtualization layer)
-- **Simpler deployment** (just Node.js + Chrome)
-
-### Performance Optimizations
-
-✅ **Headless Chrome** - No GUI overhead  
-✅ **Memory limits** - Node.js heap limited to 256MB  
-✅ **Garbage collection** - Aggressive cleanup  
-✅ **Disabled Chrome features** - Images, extensions, plugins disabled  
-✅ **Single process** - Chrome runs in single-process mode
-
-## Usage
-
-The bot responds to natural language messages in your badminton group:
-
-- **Join**: "I want to play", "Count me in"
-- **Add guest**: "John wants to play", "+John"
+- **Join**: "I want to play", "Count me in", "I can play"
+- **Add Guest**: "John wants to play", "+John Smith"
 - **Remove**: "I can't play anymore", "John doesn't want to play"
-- **Check status**: "Who's playing?", "Any spots available?"
-- **Location**: "Booked court at Lions", "Playing at Batts"
+- **Check Status**: "Who's playing?", "Any spots available?"
+- **Location**: "Booked court at Lions", "Playing at Batts today"
 
 ## Court Logic
 
 - **1-5 players**: 1 court
-- **6-7 players**: 1 court (extras go to waitlist until 8 players)
+- **6-7 players**: 1 court (extras waitlisted until 8 players)
 - **8-10 players**: 2 courts
-- **11+ players**: Waitlist until enough for new court (groups of 4)
+- **11+ players**: Additional courts in groups of 4
+
+## Resource Usage
+
+**Optimized for minimal impact:**
+
+- Memory: ~60-80MB (vs 600MB+ with Docker)
+- CPU: 1-3% when idle
+- Power: Ultra-low consumption mode on Windows
 
 ## Configuration
 
-The bot automatically configures based on your `.env` file. Available settings:
+**Hard-coded settings** (edit `bot.js` if needed):
 
-- `GROUP_NAME`: WhatsApp group to monitor
-- `DEFAULT_LOCATION`: Default playing location
-- `OPENAI_API_KEY`: For AI message analysis (optional)
-- `PLAYERS_PER_COURT`: Default players per court (4)
-- `MAX_PLAYERS_PER_COURT`: Maximum before new court (5)
+- Group Name: "Adam test"
+- Default Location: "Batts"
+- Players per Court: 4
+- Max Players per Court: 5
+
+**Environment variable:**
+
+- `OPENAI_API_KEY` - Required for AI message analysis
 
 ## Requirements
 
-- **Node.js 18+** (Windows/macOS/Linux)
-- **Google Chrome browser** (any platform)
-- **WhatsApp account**
-- **OpenAI API key** (optional - falls back to pattern matching)
+- Node.js 18 or higher
+- Google Chrome browser
+- OpenAI API key
+- WhatsApp account
 
-### Platform-Specific Notes:
+## Platform Support
 
-**Windows:**
+- ✅ **Windows** - Uses `start.bat` with embedded API key
+- ✅ **macOS** - Uses `start.sh` with direnv environment
+- ✅ **Linux** - Uses `start.sh` with direnv environment
 
-- Use `start.bat` script for simple startup
-- Edit the API key directly in the batch file (line 20)
-- Chrome typically installed at: `C:\Program Files\Google\Chrome\Application\`
+## Troubleshooting
 
-**macOS:**
+**Bot won't start:**
 
-- Use `start.sh` and direnv with `.envrc`
-- Chrome typically installed at: `/Applications/Google Chrome.app/`
+- Check Node.js version: `node --version` (should be 18+)
+- Check Chrome installation
+- Verify API key is set correctly
 
-**Linux:**
+**QR code not appearing:**
 
-- Use `start.sh` and direnv with `.envrc`
-- Chrome typically installed at: `/usr/bin/google-chrome-stable`
+- Close any existing Chrome instances
+- Try running the start script again
 
-## Version History
+**Group not found:**
 
-- **v1.0**: Initial release with basic functionality
-- **v1.1**: Added AI analysis and improved court logic
-- **v1.2**: Enhanced guest management and poll support
-- **v1.3**: Removed Docker, optimized for minimal resource usage
+- Bot looks for exact match "Adam test"
+- Check group name in WhatsApp matches exactly
 
 ## License
 
