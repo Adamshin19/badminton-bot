@@ -4,25 +4,26 @@ const OpenAI = require("openai");
 
 class BadmintonBot {
   constructor() {
-    // Determine if running in Docker
-    const isDocker = process.env.NODE_ENV === 'production' || process.env.DOCKER === 'true';
-    
     this.client = new Client({
       authStrategy: new LocalAuth(),
       puppeteer: {
-        headless: isDocker ? true : false, // Always headless in Docker
+        headless: true, // Always headless for efficiency
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
           "--disable-accelerated-2d-canvas",
           "--no-first-run",
-          "--no-zygote",
           "--disable-gpu",
           "--disable-background-timer-throttling",
           "--disable-backgrounding-occluded-windows",
           "--disable-renderer-backgrounding",
-          ...(isDocker ? ["--single-process", "--no-zygote"] : [])
+          "--memory-pressure-off",
+          "--disable-extensions",
+          "--disable-plugins",
+          "--disable-images", // Don't load images for efficiency
+          "--no-default-browser-check",
+          "--disable-default-apps",
         ],
         executablePath: this.getChromePath(),
       },
@@ -56,17 +57,36 @@ class BadmintonBot {
   }
 
   getChromePath() {
-    // Docker environment
-    if (process.env.NODE_ENV === 'production' || process.env.DOCKER === 'true') {
-      return '/usr/bin/google-chrome-stable';
-    }
-    
-    // Local development
+    // macOS
     if (process.platform === "darwin") {
       return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     }
-    
-    // Default for other platforms
+
+    // Linux
+    if (process.platform === "linux") {
+      return "/usr/bin/google-chrome-stable";
+    }
+
+    // Windows - check common installation paths
+    if (process.platform === "win32") {
+      const fs = require("fs");
+      const possiblePaths = [
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        process.env.LOCALAPPDATA + "\\Google\\Chrome\\Application\\chrome.exe",
+      ];
+
+      for (const path of possiblePaths) {
+        if (fs.existsSync(path)) {
+          return path;
+        }
+      }
+
+      // Fallback to default if none found
+      return "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+    }
+
+    // Default - let Puppeteer find it
     return undefined;
   }
 
