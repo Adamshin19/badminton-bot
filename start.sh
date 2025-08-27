@@ -21,19 +21,39 @@ else
     exit 1
 fi
 
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo "⚠️  .env file not found. Creating template..."
-    cat > .env << EOF
-OPENAI_API_KEY=your_api_key_here
-GROUP_NAME=your_whatsapp_group_name
-DEFAULT_LOCATION=Batts
-PLAYERS_PER_COURT=4
-MAX_PLAYERS_PER_COURT=5
+# Check if .envrc file exists and direnv is configured
+if [ ! -f .envrc ]; then
+    echo "⚠️  .envrc file not found. Creating template..."
+    cat > .envrc << EOF
+export OPENAI_API_KEY=your_api_key_here
+export GROUP_NAME="your_whatsapp_group_name"
+export DEFAULT_LOCATION="Batts"
+export PLAYERS_PER_COURT=4
+export MAX_PLAYERS_PER_COURT=5
 EOF
-    echo "📝 Please edit .env file with your settings, then run this script again."
+    echo "📝 Please edit .envrc file with your settings"
+    echo "📝 Then run: direnv allow ."
+    echo "📝 Finally, run this script again."
     exit 1
 fi
+
+# Check if direnv is installed
+if ! command -v direnv >/dev/null 2>&1; then
+    echo "❌ direnv not found. Please install direnv first:"
+    echo "   brew install direnv"
+    echo "   Then add to your shell config: eval \"\$(direnv hook zsh)\""
+    exit 1
+fi
+
+# Check if OPENAI_API_KEY is loaded (indicates direnv is working)
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "⚠️  Environment variables not loaded. Please run:"
+    echo "   direnv allow ."
+    echo "   Then run this script again."
+    exit 1
+fi
+
+echo "✅ Environment variables loaded via direnv"
 
 # Start the bot
 echo "🚀 Starting bot..."

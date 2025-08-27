@@ -31,11 +31,11 @@ class BadmintonBot {
 
     // Configuration - Easy to modify via environment variables
     this.config = {
-      groupName: process.env.GROUP_NAME || "Adam test",
-      defaultLocation: process.env.DEFAULT_LOCATION || "Batts",
+      groupName: "Adam test",
+      defaultLocation: "Batts",
       openaiApiKey: process.env.OPENAI_API_KEY,
-      playersPerCourt: parseInt(process.env.PLAYERS_PER_COURT) || 4,
-      maxPlayersPerCourt: parseInt(process.env.MAX_PLAYERS_PER_COURT) || 5,
+      playersPerCourt: 4,
+      maxPlayersPerCourt: 5,
     };
 
     // Initialize OpenAI with cheapest model
