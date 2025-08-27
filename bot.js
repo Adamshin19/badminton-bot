@@ -4,10 +4,13 @@ const OpenAI = require("openai");
 
 class BadmintonBot {
   constructor() {
+    // Determine if running in Docker
+    const isDocker = process.env.NODE_ENV === 'production' || process.env.DOCKER === 'true';
+    
     this.client = new Client({
       authStrategy: new LocalAuth(),
       puppeteer: {
-        headless: false,
+        headless: isDocker ? true : false, // Always headless in Docker
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -16,22 +19,22 @@ class BadmintonBot {
           "--no-first-run",
           "--no-zygote",
           "--disable-gpu",
+          "--disable-background-timer-throttling",
+          "--disable-backgrounding-occluded-windows",
+          "--disable-renderer-backgrounding",
+          ...(isDocker ? ["--single-process", "--no-zygote"] : [])
         ],
-        executablePath:
-          process.platform === "darwin"
-            ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            : undefined,
+        executablePath: this.getChromePath(),
       },
     });
 
-    // Configuration - Easy to modify
+    // Configuration - Easy to modify via environment variables
     this.config = {
-      //   groupName: "Saturday Badminton Court Scavenging Carnivores",
-      groupName: "Adam test",
-      defaultLocation: "Batts",
+      groupName: process.env.GROUP_NAME || "Adam test",
+      defaultLocation: process.env.DEFAULT_LOCATION || "Batts",
       openaiApiKey: process.env.OPENAI_API_KEY,
-      playersPerCourt: 4,
-      maxPlayersPerCourt: 5,
+      playersPerCourt: parseInt(process.env.PLAYERS_PER_COURT) || 4,
+      maxPlayersPerCourt: parseInt(process.env.MAX_PLAYERS_PER_COURT) || 5,
     };
 
     // Initialize OpenAI with cheapest model
@@ -50,6 +53,21 @@ class BadmintonBot {
     this.maxHistoryLength = 5; // Keep last 5 messages
 
     this.setupEventHandlers();
+  }
+
+  getChromePath() {
+    // Docker environment
+    if (process.env.NODE_ENV === 'production' || process.env.DOCKER === 'true') {
+      return '/usr/bin/google-chrome-stable';
+    }
+    
+    // Local development
+    if (process.platform === "darwin") {
+      return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    }
+    
+    // Default for other platforms
+    return undefined;
   }
 
   setupEventHandlers() {

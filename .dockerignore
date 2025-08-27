@@ -1,0 +1,33 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+.env
+.envrc
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Data directories (will be mounted as volumes)
+.wwebjs_auth
+.wwebjs_cache
+data/
+logs/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+backup-settings.sh
+*backup*

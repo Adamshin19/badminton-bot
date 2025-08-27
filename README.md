@@ -12,36 +12,89 @@ An intelligent WhatsApp bot for managing badminton group coordination and player
 ✅ **Poll Vote Integration** - Responds to WhatsApp poll votes  
 ✅ **Waitlist Management** - Automatic promotion when spots open up
 
-## Installation
+## Quick Start (Docker - Recommended)
 
-1. Clone the repository:
+### Prerequisites
+
+- Docker and Docker Compose installed
+- OpenAI API key
+
+### 1. Clone and Setup
+
+```bash
+git clone https://github.com/Adamshin19/badminton-bot.git
+cd badminton-bot
+cp .env.example .env
+```
+
+### 2. Configure Environment
+
+Edit `.env` file:
+
+```bash
+OPENAI_API_KEY=your_api_key_here
+GROUP_NAME=your_whatsapp_group_name
+DEFAULT_LOCATION=Batts
+```
+
+### 3. Run with Docker
+
+```bash
+# Build and start
+docker-compose up --build
+
+# Or run in background
+docker-compose up -d --build
+```
+
+### 4. Authenticate WhatsApp
+
+- QR code will appear in the terminal
+- Scan with your WhatsApp to authenticate
+- Session will be saved for future runs
+
+## Manual Installation (Node.js)
+
+### Prerequisites
+
+- Node.js 18+
+- npm or yarn
+
+### 1. Clone repository:
 
 ```bash
 git clone https://github.com/Adamshin19/badminton-bot.git
 cd badminton-bot
 ```
 
-2. Install dependencies:
+### 2. Install dependencies:
 
 ```bash
 npm install
 ```
 
-3. Set up environment variables:
+### 3. Set up environment variables:
 
 ```bash
-# Create .envrc file with your OpenAI API key
+# Option A: Create .env file
+cp .env.example .env
+# Edit .env with your values
+
+# Option B: Use direnv (if installed)
 echo "export OPENAI_API_KEY=your_api_key_here" > .envrc
 direnv allow
 ```
 
-4. Start the bot:
+### 4. Start the bot:
 
 ```bash
 npm start
 ```
 
-5. Scan the QR code with WhatsApp to authenticate
+### 5. Authenticate WhatsApp
+
+- Scan the QR code that appears in terminal
+- Bot will start monitoring your configured group
 
 ## Usage
 
